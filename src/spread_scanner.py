@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from itertools import combinations
 from pathlib import Path
 
@@ -13,9 +13,12 @@ from .universe import (
     fetch_exchange_universe,
     top_liquid_tickers,
 )
+from brokers import okx
+from brokers.common import http_get_json, to_float, to_int
 
 
 DEFAULT_TOP = 1000
+OKX_FUNDING_ENRICH_LIMIT = 200
 
 
 @dataclass(frozen=True)
@@ -79,8 +82,57 @@ def fetch_top_tickers(
         for future in as_completed(futures):
             name = futures[future]
             universe = future.result()
-            top_by_exchange[name] = top_liquid_tickers(universe.tickers, top)
+            top_tickers = top_liquid_tickers(universe.tickers, top)
+            if name == "okx":
+                top_tickers = enrich_okx_funding(top_tickers, timeout)
+            top_by_exchange[name] = top_tickers
     return top_by_exchange
+
+
+def enrich_okx_funding(tickers: list[TickerQuote], timeout: float) -> list[TickerQuote]:
+    enriched = list(tickers)
+    candidates = [
+        (index, ticker)
+        for index, ticker in enumerate(enriched[:OKX_FUNDING_ENRICH_LIMIT])
+        if ticker.funding_rate is None
+    ]
+    if not candidates:
+        return enriched
+
+    with ThreadPoolExecutor(max_workers=min(12, len(candidates))) as executor:
+        futures = {
+            executor.submit(fetch_okx_funding_rate, ticker.symbol, timeout): index
+            for index, ticker in candidates
+        }
+        for future in as_completed(futures):
+            index = futures[future]
+            try:
+                funding_rate, next_funding_time_ms = future.result()
+            except Exception:
+                continue
+            raw = dict(enriched[index].raw)
+            raw["funding_enriched"] = {
+                "funding_rate": funding_rate,
+                "next_funding_time_ms": next_funding_time_ms,
+            }
+            enriched[index] = replace(enriched[index], funding_rate=funding_rate, raw=raw)
+    return enriched
+
+
+def fetch_okx_funding_rate(symbol: str, timeout: float) -> tuple[float | None, int | None]:
+    payload, _ = http_get_json(
+        okx.BASE_URL,
+        "/api/v5/public/funding-rate",
+        {"instId": symbol},
+        timeout=timeout,
+    )
+    if payload.get("code") != "0":
+        return None, None
+    data = payload.get("data")
+    item = data[0] if isinstance(data, list) and data else None
+    if not isinstance(item, dict):
+        return None, None
+    return to_float(item.get("fundingRate")), to_int(item.get("nextFundingTime"))
 
 
 def best_direction(left: TickerQuote, right: TickerQuote) -> SpreadRow | None:
@@ -199,7 +251,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Pairwise spread scanner for top liquid perpetual markets."
     )
-    parser.add_argument("--exchanges", help="Comma-separated list, default: bybit,bitget,okx,mexc")
+    parser.add_argument("--exchanges", help="Comma-separated list, default: bybit,bitget,okx,mexc,binance,hyperliquid,aster")
     parser.add_argument("--quote", default="USDT")
     parser.add_argument("--top", type=int, default=DEFAULT_TOP)
     parser.add_argument("--limit", type=int, default=50)

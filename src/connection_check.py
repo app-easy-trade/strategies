@@ -25,7 +25,7 @@ def check_exchange(exchange: str, quote: str, top: int, timeout: float) -> tuple
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Check public market-data connectivity.")
-    parser.add_argument("--exchanges", help="Comma-separated list, default: bybit,bitget,okx,mexc")
+    parser.add_argument("--exchanges", help="Comma-separated list, default: bybit,bitget,okx,mexc,binance,hyperliquid,aster")
     parser.add_argument("--quote", default="USDT")
     parser.add_argument("--top", type=int, default=DEFAULT_TOP)
     parser.add_argument("--timeout", type=float, default=10.0)

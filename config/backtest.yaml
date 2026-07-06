@@ -1,0 +1,26 @@
+# MVP backtest parameters. Keep this file dependency-free: only simple key: value pairs.
+min_spread_pct: 2.0
+max_spread_pct: 10.0
+min_volume_usd: 400000
+liquidity_check_usd: 1000
+min_zscore: 0
+min_velocity_pct_per_minute: 0
+min_net_expected_profit_usd: 0
+rolling_window: 20
+position_notional_usd: 200
+leverage: 5
+available_margin_usd: 200
+max_margin_usage_pct: 70
+required_adverse_buffer_pct: 5
+maker_fee_pct: 0.02
+taker_fee_pct: 0.055
+slippage_pct: 0.03
+limit_order_timeout_seconds: 5
+market_fallback_enabled: true
+one_leg_timeout_seconds: 5
+tp1_close_fraction: 0.5
+tp1_retrace_fraction: 0.5
+final_exit_spread_pct: 0.5
+max_adverse_spread_pct: 5.0
+max_holding_seconds: 86400
+funding_interval_hours: 8

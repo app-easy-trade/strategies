@@ -4,11 +4,11 @@ from dataclasses import asdict, dataclass, field
 from time import perf_counter
 from typing import Any, Callable
 
-from brokers import bitget, bybit, mexc, okx
+from brokers import aster, binance, bitget, bybit, hyperliquid, mexc, okx
 from brokers.common import JsonObject, ensure, http_get_json, to_float, to_int
 
 
-DEFAULT_EXCHANGES = ("bybit", "bitget", "okx", "mexc")
+DEFAULT_EXCHANGES = ("bybit", "bitget", "okx", "mexc", "binance", "hyperliquid", "aster")
 
 
 @dataclass(frozen=True)
@@ -47,6 +47,9 @@ def fetch_exchange_universe(
         "bitget": fetch_bitget_universe,
         "okx": fetch_okx_universe,
         "mexc": fetch_mexc_universe,
+        "binance": fetch_binance_universe,
+        "hyperliquid": fetch_hyperliquid_universe,
+        "aster": fetch_aster_universe,
     }
     if exchange not in fetchers:
         raise ValueError(f"Unknown exchange: {exchange}")
@@ -231,6 +234,112 @@ def fetch_mexc_universe(quote: str = "USDT", timeout: float = 10.0) -> ExchangeU
         exchange=mexc.EXCHANGE,
         tickers=tickers,
         latency_ms=round((perf_counter() - started) * 1000, 3),
+    )
+
+
+def fetch_binance_universe(quote: str = "USDT", timeout: float = 10.0) -> ExchangeUniverse:
+    started = perf_counter()
+    tickers_payload, books, premiums, api_latency = binance.fetch_universe_payloads(timeout=timeout)
+    tickers: list[TickerQuote] = []
+    for item in tickers_payload:
+        symbol = str(item.get("symbol", "")).upper()
+        if not symbol.endswith(quote):
+            continue
+        book = books.get(symbol, {})
+        premium = premiums.get(symbol, {})
+        tickers.append(
+            TickerQuote(
+                exchange=binance.EXCHANGE,
+                symbol=symbol,
+                base=symbol.removesuffix(quote),
+                quote=quote,
+                bid=to_float(book.get("bidPrice")),
+                ask=to_float(book.get("askPrice")),
+                last_price=to_float(item.get("lastPrice")),
+                mark_price=to_float(premium.get("markPrice")),
+                funding_rate=to_float(premium.get("lastFundingRate")),
+                open_interest=None,
+                volume_24h=to_float(item.get("volume")),
+                quote_volume_24h=to_float(item.get("quoteVolume")),
+                timestamp_ms=to_int(item.get("closeTime")) or to_int(premium.get("time")),
+                raw={"ticker": item, "book_ticker": book, "premium": premium},
+            )
+        )
+    return ExchangeUniverse(
+        exchange=binance.EXCHANGE,
+        tickers=tickers,
+        latency_ms=round(api_latency + (perf_counter() - started) * 1000, 3),
+    )
+
+
+def fetch_aster_universe(quote: str = "USDT", timeout: float = 10.0) -> ExchangeUniverse:
+    started = perf_counter()
+    tickers_payload, books, premiums, api_latency = aster.fetch_universe_payloads(timeout=timeout)
+    tickers: list[TickerQuote] = []
+    for item in tickers_payload:
+        symbol = str(item.get("symbol", "")).upper()
+        if not symbol.endswith(quote):
+            continue
+        book = books.get(symbol, {})
+        premium = premiums.get(symbol, {})
+        tickers.append(
+            TickerQuote(
+                exchange=aster.EXCHANGE,
+                symbol=symbol,
+                base=symbol.removesuffix(quote),
+                quote=quote,
+                bid=to_float(book.get("bidPrice")),
+                ask=to_float(book.get("askPrice")),
+                last_price=to_float(item.get("lastPrice")),
+                mark_price=to_float(premium.get("markPrice")),
+                funding_rate=to_float(premium.get("lastFundingRate")),
+                open_interest=None,
+                volume_24h=to_float(item.get("volume")),
+                quote_volume_24h=to_float(item.get("quoteVolume")),
+                timestamp_ms=to_int(item.get("closeTime")) or to_int(premium.get("time")),
+                raw={"ticker": item, "book_ticker": book, "premium": premium},
+            )
+        )
+    return ExchangeUniverse(
+        exchange=aster.EXCHANGE,
+        tickers=tickers,
+        latency_ms=round(api_latency + (perf_counter() - started) * 1000, 3),
+    )
+
+
+def fetch_hyperliquid_universe(quote: str = "USDT", timeout: float = 10.0) -> ExchangeUniverse:
+    universe, contexts, api_latency = hyperliquid.fetch_meta_and_contexts(timeout=timeout)
+    tickers: list[TickerQuote] = []
+    for meta, ctx in zip(universe, contexts):
+        if meta.get("isDelisted") is True:
+            continue
+        base = str(meta.get("name", "")).upper()
+        if not base:
+            continue
+        mid = to_float(ctx.get("midPx")) or to_float(ctx.get("markPx"))
+        mark = to_float(ctx.get("markPx"))
+        tickers.append(
+            TickerQuote(
+                exchange=hyperliquid.EXCHANGE,
+                symbol=f"{base}{quote}",
+                base=base,
+                quote=quote,
+                bid=mid,
+                ask=mid,
+                last_price=mid,
+                mark_price=mark,
+                funding_rate=to_float(ctx.get("funding")),
+                open_interest=to_float(ctx.get("openInterest")),
+                volume_24h=None,
+                quote_volume_24h=to_float(ctx.get("dayNtlVlm")),
+                timestamp_ms=None,
+                raw={"meta": meta, "context": ctx, "bid_ask_note": "universe uses mid/mark approximation; fetch_snapshot uses l2Book"},
+            )
+        )
+    return ExchangeUniverse(
+        exchange=hyperliquid.EXCHANGE,
+        tickers=tickers,
+        latency_ms=round(api_latency, 3),
     )
 
 

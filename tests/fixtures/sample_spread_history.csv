@@ -1,0 +1,7 @@
+timestamp,base,pair,long_exchange,short_exchange,long_symbol,short_symbol,long_ask,short_bid,spread_pct,min_quote_volume_24h,long_funding_rate,short_funding_rate
+2026-01-01T00:00:00Z,BTC,bybit/mexc,bybit,mexc,BTCUSDT,BTC_USDT,100.00,103.50,3.50,2500000,0.0001,0.0002
+2026-01-01T00:05:00Z,BTC,bybit/mexc,bybit,mexc,BTCUSDT,BTC_USDT,100.40,102.20,1.79,2500000,0.0001,0.0002
+2026-01-01T00:10:00Z,BTC,bybit/mexc,bybit,mexc,BTCUSDT,BTC_USDT,100.80,101.00,0.20,2500000,0.0001,0.0002
+2026-01-01T01:00:00Z,ETH,bitget/okx,bitget,okx,ETHUSDT,ETH-USDT-SWAP,50.00,53.00,6.00,1800000,0.0003,0.0001
+2026-01-01T01:04:00Z,ETH,bitget/okx,bitget,okx,ETHUSDT,ETH-USDT-SWAP,49.80,53.20,6.83,1800000,0.0003,0.0001
+2026-01-01T01:08:00Z,ETH,bitget/okx,bitget,okx,ETHUSDT,ETH-USDT-SWAP,49.60,55.80,12.50,1800000,0.0003,0.0001

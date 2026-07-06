@@ -74,7 +74,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Monitor pairwise exchange spreads every N seconds."
     )
-    parser.add_argument("--exchanges", help="Comma-separated list, default: bybit,bitget,okx,mexc")
+    parser.add_argument("--exchanges", help="Comma-separated list, default: bybit,bitget,okx,mexc,binance,hyperliquid,aster")
     parser.add_argument("--quote", default="USDT")
     parser.add_argument("--top", type=int, default=DEFAULT_TOP)
     parser.add_argument("--interval", type=int, default=300, help="Seconds between checks.")

@@ -1,0 +1,4 @@
+base,pair,long_exchange,short_exchange,long_symbol,short_symbol,entry_time,exit_time,entry_spread_pct,exit_spread_pct,max_spread_pct,holding_seconds,position_notional_usd,gross_pnl_usd,fees_usd,slippage_usd,funding_pnl_usd,net_pnl_usd,exit_reason,entry_zscore,entry_velocity_pct_per_minute,entry_category,entry_net_expected_profit_usd
+BTC,bybit/mexc,bybit,mexc,BTCUSDT,BTC_USDT,2026-01-01T00:00:00Z,2026-01-01T00:10:00Z,3.5,0.2,3.5,600.0,200,6.6,0.41,0.24,0.0004,5.9504,final_spread_target,,,medium,6.48
+ETH,bitget/okx,bitget,okx,ETHUSDT,ETH-USDT-SWAP,2026-01-01T01:00:00Z,2026-01-01T01:08:00Z,6.0,12.5,12.5,480.0,200,-13.0,0.3,0.24,-0.0007,-13.5407,max_adverse_spread,,,active,11.42
+

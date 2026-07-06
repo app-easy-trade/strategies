@@ -10,6 +10,8 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from backtest.report import build_report, format_report
+from src.connection_check import check_exchange
 from src.spread_monitor import filter_rows
 from src.spread_scanner import DEFAULT_TOP, SpreadRow, format_funding_edge, scan_spreads, write_csv
 from src.universe import exchange_names
@@ -32,9 +34,7 @@ def load_env_file(path: Path = Path(".env")) -> None:
         if not stripped or stripped.startswith("#") or "=" not in stripped:
             continue
         key, value = stripped.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        os.environ.setdefault(key, value)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
 def telegram_request(
@@ -51,7 +51,7 @@ def telegram_request(
         headers={
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "spread-arbitrage-telegram-output/0.1",
+            "User-Agent": "spread-arbitrage-telegram-output/0.2",
         },
         method="POST",
     )
@@ -109,54 +109,9 @@ def get_chat_ids(token: str, timeout: float = 20.0) -> list[tuple[str, str]]:
     return sorted(chats.items(), key=lambda item: item[1])
 
 
-def build_alert_text(
-    rows: list[SpreadRow],
-    limit: int,
-    started_at: datetime,
-    top: int,
-    min_spread: float,
-    max_spread: float | None,
-    min_volume: float | None,
-    require_funding_favorable: bool,
-) -> str:
-    timestamp = started_at.strftime("%Y-%m-%d %H:%M:%S")
-    shown = rows[:limit]
-    lines = [
-        f"Spread Arbitrage | {timestamp}",
-        f"Top-{top} scan: найдено разлетов {len(rows)}",
-        f"Filters: spread >= {min_spread:.4g}%, max <= {max_spread if max_spread is not None else 'off'}%, minVol24h >= {min_volume if min_volume is not None else 'off'}",
-        f"Funding filter: {'favorable only' if require_funding_favorable else 'off'}",
-        "",
-    ]
-
-    if not shown:
-        lines.append("Разлетов выше фильтров сейчас нет.")
-        return "\n".join(lines)
-
-    for index, row in enumerate(shown, start=1):
-        lines.append(
-            f"{index}. {row.base} | spread {row.spread_pct:.4f}%"
-        )
-        lines.append(
-            f"   LONG {row.long_exchange} {row.long_symbol} ask={row.long_ask:.8g}"
-        )
-        lines.append(
-            f"   SHORT {row.short_exchange} {row.short_symbol} bid={row.short_bid:.8g}"
-        )
-        lines.append(f"   minVol24h={row.min_quote_volume_24h:.2f}")
-        lines.append(f"   funding={format_funding_edge(row)} {row.funding_status}")
-
-    if len(rows) > limit:
-        lines.append("")
-        lines.append(f"Еще {len(rows) - limit} строк скрыто лимитом Telegram-вывода.")
-
-    return "\n".join(lines)
-
-
 def collect_rows(args: argparse.Namespace) -> list[SpreadRow]:
-    exchanges = exchange_names(args.exchanges)
     rows, _ = scan_spreads(
-        exchanges=exchanges,
+        exchanges=exchange_names(args.exchanges),
         quote=args.quote.upper(),
         top=args.top,
         timeout=args.timeout,
@@ -170,19 +125,113 @@ def collect_rows(args: argparse.Namespace) -> list[SpreadRow]:
     )
 
 
+def build_alert_text(
+    rows: list[SpreadRow],
+    limit: int,
+    started_at: datetime,
+    top: int,
+    min_spread: float,
+    max_spread: float | None,
+    min_volume: float | None,
+    require_funding_favorable: bool,
+) -> str:
+    lines = [
+        f"Spread Arbitrage | {started_at.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Top-{top} scan: found spreads {len(rows)}",
+        f"Filters: spread >= {min_spread:.4g}%, max <= {max_spread if max_spread is not None else 'off'}%, minVol24h >= {min_volume if min_volume is not None else 'off'}",
+        f"Funding filter: {'favorable only' if require_funding_favorable else 'off'}",
+        "",
+    ]
+    shown = rows[:limit]
+    if not shown:
+        lines.append("No spreads above filters right now.")
+        return "\n".join(lines)
+
+    for index, row in enumerate(shown, start=1):
+        lines.append(f"{index}. {row.base} | spread {row.spread_pct:.4f}%")
+        lines.append(f"   LONG {row.long_exchange} {row.long_symbol} ask={row.long_ask:.8g}")
+        lines.append(f"   SHORT {row.short_exchange} {row.short_symbol} bid={row.short_bid:.8g}")
+        lines.append(f"   minVol24h={row.min_quote_volume_24h:.2f}")
+        lines.append(f"   funding={format_funding_edge(row)} {row.funding_status}")
+
+    if len(rows) > limit:
+        lines.append("")
+        lines.append(f"More rows hidden by Telegram limit: {len(rows) - limit}")
+    return "\n".join(lines)
+
+
+def build_daily_control_text(args: argparse.Namespace, rows: list[SpreadRow]) -> str:
+    names = exchange_names(args.exchanges)
+    lines = [
+        f"Daily Control | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "",
+        "API status:",
+    ]
+    for name in names:
+        try:
+            _, message = check_exchange(name, args.quote.upper(), min(args.top, args.health_top), args.timeout)
+        except Exception as exc:
+            lines.append(f"- {name}: FAIL {type(exc).__name__}: {exc}")
+        else:
+            lines.append(f"- {name}: {message}")
+
+    lines.extend(["", f"Signals above filters: {len(rows)}"])
+    for index, row in enumerate(rows[: args.limit], start=1):
+        lines.append(
+            f"{index}. {row.base} {row.long_exchange}->{row.short_exchange} "
+            f"spread={row.spread_pct:.4f}% funding={format_funding_edge(row)} "
+            f"{row.funding_status} vol={row.min_quote_volume_24h:.0f}"
+        )
+
+    funding_counts = {
+        "favorable": len([row for row in rows if row.funding_status == "favorable"]),
+        "against": len([row for row in rows if row.funding_status == "against"]),
+        "unknown": len([row for row in rows if row.funding_status == "unknown"]),
+    }
+    lines.extend(
+        [
+            "",
+            "Funding summary:",
+            f"- favorable: {funding_counts['favorable']}",
+            f"- against: {funding_counts['against']}",
+            f"- unknown: {funding_counts['unknown']}",
+        ]
+    )
+
+    if args.backtest_trades:
+        report = build_report(
+            Path(args.backtest_trades),
+            Path(args.backtest_skipped) if args.backtest_skipped else None,
+        )
+        lines.extend(["", format_report(report)])
+
+    lines.extend(
+        [
+            "",
+            "Execution status:",
+            "- real orders: disabled",
+            "- current mode: scanner/backtest/paper-ready model only",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def run_once(args: argparse.Namespace, token: str | None, chat_id: str | None) -> list[SpreadRow]:
     started_at = datetime.now()
     rows = collect_rows(args)
-    text = build_alert_text(
-        rows=rows,
-        limit=args.limit,
-        started_at=started_at,
-        top=args.top,
-        min_spread=args.min_spread,
-        max_spread=args.max_spread,
-        min_volume=args.min_volume,
-        require_funding_favorable=args.require_funding_favorable,
-    )
+    if args.daily_control:
+        text = build_daily_control_text(args, rows)
+    else:
+        text = build_alert_text(
+            rows=rows,
+            limit=args.limit,
+            started_at=started_at,
+            top=args.top,
+            min_spread=args.min_spread,
+            max_spread=args.max_spread,
+            min_volume=args.min_volume,
+            require_funding_favorable=args.require_funding_favorable,
+        )
 
     print(text)
     if args.csv:
@@ -226,9 +275,9 @@ def split_message(text: str) -> list[str]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Send top spread alerts to Telegram every N seconds."
+        description="Send spread alerts or daily control reports to Telegram."
     )
-    parser.add_argument("--exchanges", help="Comma-separated list, default: bybit,bitget,okx,mexc")
+    parser.add_argument("--exchanges", help="Comma-separated list, default: bybit,bitget,okx,mexc,binance,hyperliquid,aster")
     parser.add_argument("--quote", default="USDT")
     parser.add_argument("--top", type=int, default=DEFAULT_TOP)
     parser.add_argument("--interval", type=int, default=300, help="Seconds between Telegram alerts.")
@@ -238,20 +287,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-volume", type=float, default=1_000_000)
     parser.add_argument("--require-funding-favorable", action="store_true")
     parser.add_argument("--timeout", type=float, default=10.0)
+    parser.add_argument("--health-top", type=int, default=25, help="Top markets per exchange for daily API checks.")
     parser.add_argument("--telegram-timeout", type=float, default=20.0)
     parser.add_argument("--csv", default="data/telegram_spreads_latest.csv")
+    parser.add_argument("--daily-control", action="store_true", help="Send API/funding/signals/backtest control report.")
+    parser.add_argument("--backtest-trades", default=None, help="Optional backtest trades CSV for daily report.")
+    parser.add_argument("--backtest-skipped", default=None, help="Optional skipped signals CSV for daily report.")
     parser.add_argument("--env", type=Path, default=Path(".env"))
     parser.add_argument("--bot-token", default=None)
     parser.add_argument("--chat-id", default=None)
-    parser.add_argument("--once", action="store_true", help="Send one Telegram alert and exit.")
+    parser.add_argument("--once", action="store_true", help="Send one Telegram alert/report and exit.")
     parser.add_argument("--dry-run", action="store_true", help="Print message without sending it.")
     parser.add_argument("--get-chat-id", action="store_true", help="Print chat IDs from recent bot updates.")
     return parser
 
 
 def main() -> None:
-    parser = build_parser()
-    args = parser.parse_args()
+    args = build_parser().parse_args()
     load_env_file(args.env)
 
     token = args.bot_token or os.getenv("TELEGRAM_BOT_TOKEN")
@@ -273,11 +325,10 @@ def main() -> None:
         return
 
     print(
-        "Telegram spread bot started: "
-        f"top={args.top}, interval={args.interval}s, limit={args.limit}, "
-        f"min_spread={args.min_spread}%, max_spread={args.max_spread}%, "
-        f"min_volume={args.min_volume}, "
-        f"require_funding_favorable={args.require_funding_favorable}"
+        "Telegram bot started: "
+        f"daily_control={args.daily_control}, top={args.top}, interval={args.interval}s, "
+        f"limit={args.limit}, min_spread={args.min_spread}%, "
+        f"max_spread={args.max_spread}%, min_volume={args.min_volume}"
     )
     while True:
         try:
@@ -290,3 +341,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
