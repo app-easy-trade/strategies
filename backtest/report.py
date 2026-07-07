@@ -17,6 +17,8 @@ class BacktestReport:
     top_skip_reasons: list[tuple[str, int]]
     pnl_by_pair: list[tuple[str, float]]
     pnl_by_base: list[tuple[str, float]]
+    pnl_by_category: list[tuple[str, float]]
+    trades_by_category: list[tuple[str, int]]
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
@@ -36,10 +38,15 @@ def build_report(trades_csv: Path, skipped_csv: Path | None = None) -> BacktestR
 
     pnl_by_pair: defaultdict[str, float] = defaultdict(float)
     pnl_by_base: defaultdict[str, float] = defaultdict(float)
+    pnl_by_category: defaultdict[str, float] = defaultdict(float)
+    trades_by_category: Counter[str] = Counter()
     for row in trades:
         pnl = float(row.get("net_pnl_usd") or 0)
         pnl_by_pair[row.get("pair") or "unknown"] += pnl
         pnl_by_base[row.get("base") or "unknown"] += pnl
+        category = row.get("entry_category") or "unknown"
+        pnl_by_category[category] += pnl
+        trades_by_category[category] += 1
 
     return BacktestReport(
         stats=calculate_stats(pnls, holding),
@@ -48,6 +55,8 @@ def build_report(trades_csv: Path, skipped_csv: Path | None = None) -> BacktestR
         top_skip_reasons=skip_reasons.most_common(5),
         pnl_by_pair=sorted(pnl_by_pair.items(), key=lambda item: item[1], reverse=True)[:5],
         pnl_by_base=sorted(pnl_by_base.items(), key=lambda item: item[1], reverse=True)[:5],
+        pnl_by_category=sorted(pnl_by_category.items(), key=lambda item: item[1], reverse=True),
+        trades_by_category=trades_by_category.most_common(),
     )
 
 
@@ -77,6 +86,14 @@ def format_report(report: BacktestReport) -> str:
         lines.append("")
         lines.append("PnL by coin:")
         lines.extend(f"- {base}: {pnl:.4f}" for base, pnl in report.pnl_by_base)
+    if report.pnl_by_category:
+        lines.append("")
+        lines.append("PnL by spread category:")
+        lines.extend(f"- {category}: {pnl:.4f}" for category, pnl in report.pnl_by_category)
+    if report.trades_by_category:
+        lines.append("")
+        lines.append("Trades by spread category:")
+        lines.extend(f"- {category}: {count}" for category, count in report.trades_by_category)
     return "\n".join(lines)
 
 

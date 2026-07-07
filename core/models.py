@@ -19,6 +19,17 @@ class SpreadSnapshot:
     min_quote_volume_24h: float
     long_funding_rate: float | None = None
     short_funding_rate: float | None = None
+    market_mode: str = "futures_futures"
+    executable_spread_100_pct: float | None = None
+    executable_spread_200_pct: float | None = None
+    executable_spread_500_pct: float | None = None
+    executable_spread_1000_pct: float | None = None
+    long_depth_usd_100: float | None = None
+    short_depth_usd_100: float | None = None
+    long_depth_usd_200: float | None = None
+    short_depth_usd_200: float | None = None
+    long_depth_usd_1000: float | None = None
+    short_depth_usd_1000: float | None = None
 
     @property
     def key(self) -> tuple[str, str, str, str, str]:
@@ -29,6 +40,17 @@ class SpreadSnapshot:
             self.long_symbol,
             self.short_symbol,
         )
+
+    def executable_spread_pct_for(self, notional_usd: float) -> float:
+        if notional_usd <= 100 and self.executable_spread_100_pct is not None:
+            return self.executable_spread_100_pct
+        if notional_usd <= 200 and self.executable_spread_200_pct is not None:
+            return self.executable_spread_200_pct
+        if notional_usd <= 500 and self.executable_spread_500_pct is not None:
+            return self.executable_spread_500_pct
+        if self.executable_spread_1000_pct is not None:
+            return self.executable_spread_1000_pct
+        return self.spread_pct
 
 
 @dataclass(frozen=True)

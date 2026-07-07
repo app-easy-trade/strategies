@@ -26,6 +26,7 @@ class OpenTrade:
     realized_pnl_usd: float = 0.0
     tp1_done: bool = False
     max_spread_pct: float = 0.0
+    min_spread_pct: float = 0.0
 
     @property
     def entry(self) -> SpreadSnapshot:
@@ -56,6 +57,11 @@ class ClosedTrade:
     entry_zscore: float | None
     entry_velocity_pct_per_minute: float | None
     entry_category: str
+    market_mode: str
+    entry_executable_spread_pct: float
+    exit_executable_spread_pct: float
+    funding_events: int
+    seconds_to_first_funding: float | None
     entry_net_expected_profit_usd: float
 
 
@@ -106,6 +112,17 @@ def snapshot_from_row(row: dict[str, str]) -> SpreadSnapshot:
         min_quote_volume_24h=as_float(row, "min_quote_volume_24h"),
         long_funding_rate=optional_float(row.get("long_funding_rate")),
         short_funding_rate=optional_float(row.get("short_funding_rate")),
+        market_mode=row.get("market_mode") or infer_market_mode(row),
+        executable_spread_100_pct=optional_float(row.get("executable_spread_100_pct")),
+        executable_spread_200_pct=optional_float(row.get("executable_spread_200_pct")),
+        executable_spread_500_pct=optional_float(row.get("executable_spread_500_pct")),
+        executable_spread_1000_pct=optional_float(row.get("executable_spread_1000_pct")),
+        long_depth_usd_100=optional_float(row.get("long_depth_usd_100")),
+        short_depth_usd_100=optional_float(row.get("short_depth_usd_100")),
+        long_depth_usd_200=optional_float(row.get("long_depth_usd_200")),
+        short_depth_usd_200=optional_float(row.get("short_depth_usd_200")),
+        long_depth_usd_1000=optional_float(row.get("long_depth_usd_1000")),
+        short_depth_usd_1000=optional_float(row.get("short_depth_usd_1000")),
     )
 
 
@@ -129,16 +146,18 @@ def run_backtest(
                 open_trades[snapshot.key] = OpenTrade(
                     entry_signal=signal,
                     max_spread_pct=snapshot.spread_pct,
+                    min_spread_pct=snapshot.spread_pct,
                 )
             else:
                 skipped.append(skipped_signal(signal))
             continue
 
         trade.max_spread_pct = max(trade.max_spread_pct, snapshot.spread_pct)
+        trade.min_spread_pct = min(trade.min_spread_pct, snapshot.spread_pct)
         if should_take_tp1(trade, snapshot, config):
-            trade.realized_pnl_usd += leg_pnl_usd(
-                trade.entry.spread_pct,
-                snapshot.spread_pct,
+            trade.realized_pnl_usd += trade_pnl_usd(
+                trade.entry,
+                snapshot,
                 config.position_notional_usd,
                 config.tp1_close_fraction,
             )
@@ -180,11 +199,70 @@ def exit_reason(
     holding_seconds = (snapshot.timestamp - trade.entry.timestamp).total_seconds()
     if snapshot.spread_pct >= trade.entry.spread_pct + config.max_adverse_spread_pct:
         return "max_adverse_spread"
-    if snapshot.spread_pct <= config.final_exit_spread_pct:
+    if should_exit_before_bad_funding(trade, snapshot, config):
+        return "funding_avoid_bad"
+    if should_dynamic_exit_after_tp1(trade, snapshot, config):
+        return "dynamic_exit_after_tp1"
+    if snapshot.spread_pct <= config.final_exit_spread_pct and not should_hold_for_good_funding(
+        trade,
+        snapshot,
+        config,
+    ):
         return "final_spread_target"
     if holding_seconds >= config.max_holding_seconds:
         return "max_holding_time"
     return None
+
+
+def should_exit_before_bad_funding(
+    trade: OpenTrade,
+    snapshot: SpreadSnapshot,
+    config: BacktestConfig,
+) -> bool:
+    if not config.funding_exit_enabled:
+        return False
+    edge_rate = funding_edge_rate(trade.entry)
+    if edge_rate is None or edge_rate >= 0:
+        return False
+    seconds_left = seconds_to_next_funding(snapshot.timestamp, config)
+    if seconds_left is None or seconds_left > config.funding_bad_exit_window_seconds:
+        return False
+    current_profit_pct = trade.entry.spread_pct - snapshot.spread_pct
+    return current_profit_pct >= config.dynamic_exit_min_profit_pct or trade.tp1_done
+
+
+def should_hold_for_good_funding(
+    trade: OpenTrade,
+    snapshot: SpreadSnapshot,
+    config: BacktestConfig,
+) -> bool:
+    if not config.funding_exit_enabled:
+        return False
+    edge_rate = funding_edge_rate(trade.entry)
+    if edge_rate is None or edge_rate <= 0:
+        return False
+    expected_event_usd = edge_rate * config.position_notional_usd * trade.remaining_fraction
+    if expected_event_usd < config.funding_good_hold_min_edge_usd:
+        return False
+    seconds_left = seconds_to_next_funding(snapshot.timestamp, config)
+    if seconds_left is None:
+        return False
+    return seconds_left <= config.funding_good_hold_window_seconds
+
+
+def should_dynamic_exit_after_tp1(
+    trade: OpenTrade,
+    snapshot: SpreadSnapshot,
+    config: BacktestConfig,
+) -> bool:
+    if not config.dynamic_exit_enabled or not trade.tp1_done:
+        return False
+    if should_hold_for_good_funding(trade, snapshot, config):
+        return False
+    current_profit_pct = trade.entry.spread_pct - snapshot.spread_pct
+    if current_profit_pct < config.dynamic_exit_min_profit_pct:
+        return False
+    return snapshot.spread_pct >= trade.min_spread_pct + config.dynamic_exit_rebound_pct
 
 
 def close_trade(
@@ -193,9 +271,9 @@ def close_trade(
     config: BacktestConfig,
     reason: str,
 ) -> ClosedTrade:
-    remaining_pnl = leg_pnl_usd(
-        trade.entry.spread_pct,
-        exit_snapshot.spread_pct,
+    remaining_pnl = trade_pnl_usd(
+        trade.entry,
+        exit_snapshot,
         config.position_notional_usd,
         trade.remaining_fraction,
     )
@@ -206,7 +284,12 @@ def close_trade(
     )
     fees = fee_cost_usd(config, trade.tp1_done)
     slippage = slippage_cost_usd(config)
-    funding = funding_pnl_usd(trade.entry, holding_seconds, config)
+    funding_events = funding_events_crossed(
+        trade.entry.timestamp,
+        exit_snapshot.timestamp,
+        config,
+    )
+    funding = funding_pnl_usd(trade.entry, funding_events, config)
     net_pnl = gross_pnl + funding - fees - slippage
     return ClosedTrade(
         base=trade.entry.base,
@@ -231,6 +314,15 @@ def close_trade(
         entry_zscore=trade.entry_signal.features.zscore,
         entry_velocity_pct_per_minute=trade.entry_signal.features.velocity_pct_per_minute,
         entry_category=trade.entry_signal.features.category,
+        market_mode=trade.entry.market_mode,
+        entry_executable_spread_pct=trade.entry.executable_spread_pct_for(
+            config.position_notional_usd,
+        ),
+        exit_executable_spread_pct=exit_snapshot.executable_spread_pct_for(
+            config.position_notional_usd,
+        ),
+        funding_events=funding_events,
+        seconds_to_first_funding=seconds_to_next_funding(trade.entry.timestamp, config),
         entry_net_expected_profit_usd=trade.entry_signal.net_expected_profit_usd,
     )
 
@@ -267,6 +359,19 @@ def leg_pnl_usd(
     return (entry_spread_pct - exit_spread_pct) / 100 * notional_usd * fraction
 
 
+def trade_pnl_usd(
+    entry: SpreadSnapshot,
+    exit_snapshot: SpreadSnapshot,
+    notional_usd: float,
+    fraction: float,
+) -> float:
+    long_qty = notional_usd / entry.long_ask
+    short_qty = notional_usd / entry.short_bid
+    long_pnl = (exit_snapshot.long_ask - entry.long_ask) * long_qty
+    short_pnl = (entry.short_bid - exit_snapshot.short_bid) * short_qty
+    return (long_pnl + short_pnl) * fraction
+
+
 def fee_cost_usd(config: BacktestConfig, had_tp1: bool) -> float:
     open_cost = 2 * config.position_notional_usd * config.maker_fee_pct / 100
     close_turnover = config.position_notional_usd
@@ -282,14 +387,46 @@ def slippage_cost_usd(config: BacktestConfig) -> float:
 
 def funding_pnl_usd(
     snapshot: SpreadSnapshot,
-    holding_seconds: float,
+    funding_events: int,
     config: BacktestConfig,
 ) -> float:
     if snapshot.long_funding_rate is None or snapshot.short_funding_rate is None:
         return 0.0
-    periods = holding_seconds / (config.funding_interval_hours * 3600)
     edge_rate = snapshot.short_funding_rate - snapshot.long_funding_rate
-    return edge_rate * config.position_notional_usd * periods
+    return edge_rate * config.position_notional_usd * funding_events
+
+
+def funding_edge_rate(snapshot: SpreadSnapshot) -> float | None:
+    if snapshot.long_funding_rate is None or snapshot.short_funding_rate is None:
+        return None
+    return snapshot.short_funding_rate - snapshot.long_funding_rate
+
+
+def funding_events_crossed(
+    entry_time: datetime,
+    exit_time: datetime,
+    config: BacktestConfig,
+) -> int:
+    holding_seconds = max(0.0, (exit_time - entry_time).total_seconds())
+    first_event_seconds = seconds_to_next_funding(entry_time, config)
+    if first_event_seconds is None or holding_seconds < first_event_seconds:
+        return 0
+    interval_seconds = funding_interval_seconds(config)
+    return 1 + int((holding_seconds - first_event_seconds) // interval_seconds)
+
+
+def seconds_to_next_funding(value: datetime, config: BacktestConfig) -> float | None:
+    interval_seconds = funding_interval_seconds(config)
+    if interval_seconds <= 0:
+        return None
+    elapsed = value.timestamp() % interval_seconds
+    if elapsed == 0:
+        return interval_seconds
+    return interval_seconds - elapsed
+
+
+def funding_interval_seconds(config: BacktestConfig) -> float:
+    return config.funding_interval_hours * 3600
 
 
 def write_trades(path: Path, trades: list[ClosedTrade]) -> None:
@@ -336,6 +473,17 @@ def required(row: dict[str, str], key: str) -> str:
     if value is None or value == "":
         raise ValueError(f"Missing required column: {key}")
     return value
+
+
+def infer_market_mode(row: dict[str, str]) -> str:
+    long_market = (row.get("long_market_type") or row.get("long_type") or "").lower()
+    short_market = (row.get("short_market_type") or row.get("short_type") or "").lower()
+    futures_markers = ("future", "perp", "swap")
+    has_spot = "spot" in {long_market, short_market}
+    has_futures = any(marker in long_market or marker in short_market for marker in futures_markers)
+    if has_spot and has_futures:
+        return "spot_futures"
+    return "futures_futures"
 
 
 def as_float(row: dict[str, str], key: str) -> float:

@@ -7,9 +7,10 @@ from pathlib import Path
 @dataclass(frozen=True)
 class StrategyConfig:
     min_spread_pct: float = 2.0
-    max_spread_pct: float = 10.0
+    max_spread_pct: float = 0.0
     min_volume_usd: float = 400_000.0
     liquidity_check_usd: float = 1_000.0
+    max_slippage_pct: float = 0.2
     min_zscore: float = 1.0
     min_velocity_pct_per_minute: float = 0.0
     min_net_expected_profit_usd: float = 0.0
@@ -30,9 +31,17 @@ class StrategyConfig:
     tp1_close_fraction: float = 0.5
     tp1_retrace_fraction: float = 0.5
     final_exit_spread_pct: float = 0.5
+    dynamic_exit_enabled: bool = True
+    dynamic_exit_rebound_pct: float = 1.0
+    dynamic_exit_min_profit_pct: float = 0.2
     max_adverse_spread_pct: float = 5.0
     max_holding_seconds: int = 86_400
     funding_interval_hours: float = 8.0
+    funding_exit_enabled: bool = True
+    funding_bad_exit_window_seconds: int = 900
+    funding_good_hold_window_seconds: int = 900
+    funding_good_hold_min_edge_usd: float = 0.0
+    allowed_market_modes: str = "futures_futures,spot_futures"
 
 
 def load_strategy_config(path: Path | None) -> StrategyConfig:

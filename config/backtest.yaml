@@ -1,8 +1,9 @@
 # MVP backtest parameters. Keep this file dependency-free: only simple key: value pairs.
 min_spread_pct: 2.0
-max_spread_pct: 10.0
+max_spread_pct: 0.0
 min_volume_usd: 400000
 liquidity_check_usd: 1000
+max_slippage_pct: 0.2
 min_zscore: 0
 min_velocity_pct_per_minute: 0
 min_net_expected_profit_usd: 0
@@ -23,6 +24,14 @@ one_leg_timeout_seconds: 5
 tp1_close_fraction: 0.5
 tp1_retrace_fraction: 0.5
 final_exit_spread_pct: 0.5
+dynamic_exit_enabled: true
+dynamic_exit_rebound_pct: 1.0
+dynamic_exit_min_profit_pct: 0.2
 max_adverse_spread_pct: 5.0
 max_holding_seconds: 86400
 funding_interval_hours: 8
+funding_exit_enabled: true
+funding_bad_exit_window_seconds: 900
+funding_good_hold_window_seconds: 900
+funding_good_hold_min_edge_usd: 0
+allowed_market_modes: futures_futures,spot_futures

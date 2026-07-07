@@ -8,6 +8,14 @@ def evaluate_execution(features: SpreadFeatures, config: StrategyConfig) -> Exec
     snapshot = features.snapshot
     estimated_slippage = 4 * config.position_notional_usd * config.slippage_pct / 100
 
+    if config.slippage_pct > config.max_slippage_pct:
+        return ExecutionDecision(
+            passed=False,
+            reason="slippage_above_max",
+            entry_mode="none",
+            estimated_slippage_usd=estimated_slippage,
+            one_leg_timeout_seconds=config.one_leg_timeout_seconds,
+        )
     if snapshot.min_quote_volume_24h < config.liquidity_check_usd:
         return ExecutionDecision(
             passed=False,

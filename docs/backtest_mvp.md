@@ -1,10 +1,10 @@
-# Backtest MVP
+# Backtest v2
 
 ## What it does
 
-The current MVP backtests two-leg spread convergence trades from an append-only CSV
-history produced by `src.spread_history_collector`. Entry decisions go through the
-core trading model in `core/`.
+The backtest validates two-leg spread convergence trades from an append-only CSV
+history produced by `src.spread_history_collector` or any compatible historical
+dataset. Entry decisions go through the core trading model in `core/`.
 
 It accounts for:
 
@@ -12,28 +12,38 @@ It accounts for:
 - LONG on the cheap exchange and SHORT on the expensive exchange;
 - TP1: close part of the position after a configured spread retrace;
 - final exit by target spread;
+- dynamic exit after TP1 when spread rebounds after a profitable compression;
+- funding exit before a bad funding event;
+- optional hold through a near positive funding event;
 - stop by maximum adverse spread expansion;
-- maximum holding time;
+- maximum holding time as an emergency limit;
 - maker/taker fees;
 - slippage;
-- funding edge between the long and short legs;
-- spread category;
+- funding edge between the long and short legs, counted only when the trade
+  actually crosses a funding timestamp;
+- spread category, including `extreme` for 10%+ spreads;
+- optional `spot_futures` and `futures_futures` market modes;
+- optional executable spread columns for $100/$200/$500/$1000 sizing;
 - rolling mean/std and z-score;
 - spread velocity and acceleration;
 - net expected profit before entry;
 - trade CSV export;
 - skipped signal CSV export with rejection reasons;
 - win rate, profit factor, drawdown, average PnL and average holding time.
-- grid optimization over spread, TP1, stop and leverage.
+- report breakdown by pair, coin and spread category.
+- grid optimization over spread, min volume, max slippage, funding mode,
+  dynamic exit mode, position size, TP1, stop and leverage.
 
 ## What is not complete yet
 
 - Real historical exchange downloads are not implemented yet. The collector starts
   accumulating history from the moment it is launched.
-- Order book depth is approximated by 24h volume filters. Full depth/slippage
-  simulation needs stored order book snapshots.
-- Limit-order waiting and partial fills are modeled as costs, not as a full
-  execution event stream.
+- Order book depth is used only if the CSV contains executable spread/depth
+  columns. Without those columns, the model falls back to top-of-book spread.
+- Limit-order waiting, order moving, partial fills and one-leg failure are still
+  modeled as costs/checks, not as a full execution event stream.
+- Spot-futures is supported in the backtest schema, but the live scanner still
+  needs dedicated spot connectors/history collection.
 - ML probability scoring is not implemented yet. Current decisions are rule-based
   and explainable.
 - TradingView is not used as a data source. It should be an analytics and charting
@@ -73,7 +83,15 @@ python -m backtest.report --trades-csv data/backtest_trades.csv --skipped-csv da
 
 Look at trade count first. A backtest with only a few trades is a plumbing check,
 not a strategy validation. Then inspect win rate, profit factor, max drawdown,
-exit reasons, skipped reasons and PnL by pair/coin.
+exit reasons, skipped reasons, PnL by pair/coin and PnL by spread category.
+
+The trade CSV includes:
+
+- `market_mode`;
+- `entry_executable_spread_pct`;
+- `exit_executable_spread_pct`;
+- `funding_events`;
+- `seconds_to_first_funding`.
 
 ## Telegram reports
 
@@ -122,5 +140,5 @@ falls below the entry filter. Entry filters only apply to new trades.
 ## Optimize parameters
 
 ```powershell
-python -m backtest.optimizer --input data/spread_history.csv --output data/optimization_results.csv --min-spreads 1,2,3,5 --tp1-retraces 0.3,0.5,0.7 --max-adverse-spreads 3,5,8 --leverages 3,5,10
+python -m backtest.optimizer --input data/spread_history.csv --output data/optimization_results.csv --min-spreads 1,2,3,5 --min-volumes 0,400000,1000000 --max-slippages 0.1,0.2 --funding-modes true,false --dynamic-exit-modes true,false --position-sizes 100,200,500 --tp1-retraces 0.3,0.5,0.7 --max-adverse-spreads 3,5,8 --leverages 3,5,10
 ```

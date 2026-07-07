@@ -8,7 +8,13 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from backtest.report import build_report, format_report
-from backtest.simulator import BacktestConfig, SpreadSnapshot, run_backtest, read_snapshots
+from backtest.simulator import (
+    BacktestConfig,
+    SpreadSnapshot,
+    funding_events_crossed,
+    read_snapshots,
+    run_backtest,
+)
 from backtest.optimizer import optimize
 from core.funding_engine import estimate_funding
 from core.risk_engine import evaluate_risk
@@ -113,6 +119,27 @@ class BacktestSimulatorTest(unittest.TestCase):
         self.assertEqual([], trades)
         self.assertEqual(1, len(skipped))
         self.assertEqual("spread_below_final_exit", skipped[0].reason)
+
+    def test_extreme_spread_is_categorized_not_rejected_by_default(self) -> None:
+        snapshots = [
+            make_snapshot("2026-01-01T00:00:00+00:00", 12.0),
+            make_snapshot("2026-01-01T00:05:00+00:00", 0.4),
+        ]
+
+        trades, _, skipped = run_backtest(snapshots, BacktestConfig(min_zscore=0))
+
+        self.assertEqual(1, len(trades))
+        self.assertEqual("extreme", trades[0].entry_category)
+        self.assertEqual([], skipped)
+
+    def test_funding_events_are_counted_only_when_crossed(self) -> None:
+        config = BacktestConfig(funding_interval_hours=8)
+        entry = datetime(2026, 1, 1, 1, 0, tzinfo=timezone.utc)
+        before_funding = datetime(2026, 1, 1, 7, 59, tzinfo=timezone.utc)
+        after_funding = datetime(2026, 1, 1, 8, 1, tzinfo=timezone.utc)
+
+        self.assertEqual(0, funding_events_crossed(entry, before_funding, config))
+        self.assertEqual(1, funding_events_crossed(entry, after_funding, config))
 
     def test_risk_engine_rejects_insufficient_margin_buffer(self) -> None:
         config = BacktestConfig(
