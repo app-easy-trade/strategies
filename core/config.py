@@ -13,6 +13,8 @@ class StrategyConfig:
     min_zscore: float = 1.0
     min_velocity_pct_per_minute: float = 0.0
     min_net_expected_profit_usd: float = 0.0
+    require_known_funding: bool = False
+    max_funding_against_usd: float = 0.0
     rolling_window: int = 20
     position_notional_usd: float = 200.0
     leverage: float = 5.0

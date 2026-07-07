@@ -22,14 +22,19 @@
 - Backtest quality report from trades/skipped CSV exports.
 - Telegram daily control report with API status, top signals, funding summary,
   optional backtest report and explicit execution status.
+- SQLite storage for spread snapshots, signals, paper trades and order book
+  impact estimates.
+- Paper trading loop using live API data without real orders.
+- Order book impact estimates for 200/500/1000 USDT notionals on captured legs.
+- Funding hard filter configuration.
 
 ## Partial
 
 - Funding data coverage: Bybit, Bitget, MEXC, Binance, Aster and Hyperliquid
   return funding in scanner rows. OKX funding is enriched for the top liquid
   scanner rows because OKX requires per-instrument funding requests.
-- Liquidity model: currently uses volume/liquidity thresholds. Full order book depth
-  and price-impact simulation are not stored in history yet.
+- Liquidity model: volume/liquidity thresholds are used for broad filtering;
+  selected paper-trade legs store order book impact estimates.
 - Execution model: validates the policy and charges slippage, but does not yet replay
   order book events, partial fills or one-leg emergency close events.
 - TradingView: planned as charting and visual analytics over exchange API data, not
@@ -43,7 +48,6 @@
 - Spot-to-perpetual mode.
 - Full database storage with SQLite/PostgreSQL.
 - Full optimizer over volume and funding settings.
-- Paper/forward trading loop.
 - Real trading execution.
 - Authenticated balance/margin checks in Daily Control Bot.
 - ML probability model for spread convergence.

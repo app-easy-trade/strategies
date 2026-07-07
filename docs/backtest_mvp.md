@@ -92,6 +92,33 @@ python -m output.telegram_bot --once --dry-run --daily-control --backtest-trades
 Remove `--dry-run` and set `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` in `.env`
 to send messages.
 
+## Paper trading
+
+Paper trading uses live exchange APIs, but never sends real orders. It writes
+spread snapshots, signals, virtual trades and order book impact estimates to
+SQLite.
+
+Run one live-data tick:
+
+```powershell
+python -m paper.paper_trader --once --db data/paper_trading.sqlite3 --top 10 --limit 10 --min-spread 0.5 --max-spread 10 --min-volume 0 --capture-orderbooks
+```
+
+Run continuously:
+
+```powershell
+python -m paper.paper_trader --db data/paper_trading.sqlite3 --interval 60 --top 1000 --limit 50 --min-spread 0.5 --min-volume 400000 --capture-orderbooks
+```
+
+Show open paper trades in Telegram daily control:
+
+```powershell
+python -m output.telegram_bot --once --dry-run --daily-control --paper-db data/paper_trading.sqlite3
+```
+
+The paper loop follows open trades using the full scan, even if the spread later
+falls below the entry filter. Entry filters only apply to new trades.
+
 ## Optimize parameters
 
 ```powershell

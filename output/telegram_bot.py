@@ -15,6 +15,7 @@ from src.connection_check import check_exchange
 from src.spread_monitor import filter_rows
 from src.spread_scanner import DEFAULT_TOP, SpreadRow, format_funding_edge, scan_spreads, write_csv
 from src.universe import exchange_names
+from storage.sqlite_store import SQLiteStore
 
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
@@ -205,6 +206,9 @@ def build_daily_control_text(args: argparse.Namespace, rows: list[SpreadRow]) ->
         )
         lines.extend(["", format_report(report)])
 
+    if args.paper_db:
+        lines.extend(["", build_paper_trades_text(Path(args.paper_db), args.paper_limit)])
+
     lines.extend(
         [
             "",
@@ -213,6 +217,32 @@ def build_daily_control_text(args: argparse.Namespace, rows: list[SpreadRow]) ->
             "- current mode: scanner/backtest/paper-ready model only",
         ]
     )
+    return "\n".join(lines)
+
+
+def build_paper_trades_text(db_path: Path, limit: int) -> str:
+    if not db_path.exists():
+        return f"Open paper trades:\n- database not found: {db_path}"
+    store = SQLiteStore(db_path)
+    try:
+        trades = store.list_open_trades()
+    finally:
+        store.close()
+
+    lines = [f"Open paper trades: {len(trades)}"]
+    if not trades:
+        lines.append("- none")
+        return "\n".join(lines)
+
+    for index, trade in enumerate(trades[:limit], start=1):
+        lines.append(
+            f"{index}. {trade.base} {trade.long_exchange}->{trade.short_exchange} "
+            f"entry={trade.entry_spread_pct:.4f}% max={trade.max_spread_pct:.4f}% "
+            f"remaining={trade.remaining_fraction:.2f} tp1={trade.tp1_done} "
+            f"ev={trade.entry_net_expected_profit_usd:.4f} entry_time={trade.entry_time}"
+        )
+    if len(trades) > limit:
+        lines.append(f"- hidden: {len(trades) - limit}")
     return "\n".join(lines)
 
 
@@ -293,6 +323,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--daily-control", action="store_true", help="Send API/funding/signals/backtest control report.")
     parser.add_argument("--backtest-trades", default=None, help="Optional backtest trades CSV for daily report.")
     parser.add_argument("--backtest-skipped", default=None, help="Optional skipped signals CSV for daily report.")
+    parser.add_argument("--paper-db", default=None, help="Optional paper trading SQLite DB for open trade report.")
+    parser.add_argument("--paper-limit", type=int, default=10, help="Max open paper trades in daily report.")
     parser.add_argument("--env", type=Path, default=Path(".env"))
     parser.add_argument("--bot-token", default=None)
     parser.add_argument("--chat-id", default=None)

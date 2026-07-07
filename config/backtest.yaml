@@ -6,6 +6,8 @@ liquidity_check_usd: 1000
 min_zscore: 0
 min_velocity_pct_per_minute: 0
 min_net_expected_profit_usd: 0
+require_known_funding: false
+max_funding_against_usd: 0
 rolling_window: 20
 position_notional_usd: 200
 leverage: 5

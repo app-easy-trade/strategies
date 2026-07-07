@@ -51,8 +51,9 @@ def scan_spreads(
     quote: str = "USDT",
     top: int = DEFAULT_TOP,
     timeout: float = 10.0,
+    allow_partial: bool = False,
 ) -> tuple[list[SpreadRow], dict[str, list[TickerQuote]]]:
-    top_by_exchange = fetch_top_tickers(exchanges, quote, top, timeout)
+    top_by_exchange = fetch_top_tickers(exchanges, quote, top, timeout, allow_partial)
     rows: list[SpreadRow] = []
 
     for left_name, right_name in combinations(exchanges, 2):
@@ -72,6 +73,7 @@ def fetch_top_tickers(
     quote: str,
     top: int,
     timeout: float,
+    allow_partial: bool = False,
 ) -> dict[str, list[TickerQuote]]:
     with ThreadPoolExecutor(max_workers=len(exchanges)) as executor:
         futures = {
@@ -81,7 +83,13 @@ def fetch_top_tickers(
         top_by_exchange: dict[str, list[TickerQuote]] = {}
         for future in as_completed(futures):
             name = futures[future]
-            universe = future.result()
+            try:
+                universe = future.result()
+            except Exception:
+                if allow_partial:
+                    top_by_exchange[name] = []
+                    continue
+                raise
             top_tickers = top_liquid_tickers(universe.tickers, top)
             if name == "okx":
                 top_tickers = enrich_okx_funding(top_tickers, timeout)
@@ -261,6 +269,7 @@ def main() -> None:
     parser.add_argument("--require-funding-favorable", action="store_true")
     parser.add_argument("--csv", type=Path, default=Path("data/spreads_top1000.csv"))
     parser.add_argument("--timeout", type=float, default=10.0)
+    parser.add_argument("--allow-partial", action="store_true", help="Continue if one exchange fails.")
     args = parser.parse_args()
 
     exchanges = exchange_names(args.exchanges)
@@ -269,6 +278,7 @@ def main() -> None:
         quote=args.quote.upper(),
         top=args.top,
         timeout=args.timeout,
+        allow_partial=args.allow_partial,
     )
     if args.min_spread is not None:
         rows = [row for row in rows if row.spread_pct >= args.min_spread]

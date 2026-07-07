@@ -18,12 +18,16 @@ from src.spread_history_collector import append_history
 from src.spread_scanner import SpreadRow
 from src.universe import DEFAULT_EXCHANGES, exchange_names
 from output.telegram_bot import build_alert_text, build_daily_control_text
+from storage.sqlite_store import SQLiteStore
 
 
 class BacktestSimulatorTest(unittest.TestCase):
     def test_sample_history_generates_target_and_stop_trades(self) -> None:
         snapshots = read_snapshots(Path("tests/fixtures/sample_spread_history.csv"))
-        trades, stats, skipped = run_backtest(snapshots, BacktestConfig(min_zscore=0))
+        trades, stats, skipped = run_backtest(
+            snapshots,
+            BacktestConfig(min_zscore=0, max_funding_against_usd=1.0),
+        )
 
         self.assertEqual(2, len(trades))
         self.assertEqual(0, len(skipped))
@@ -108,7 +112,7 @@ class BacktestSimulatorTest(unittest.TestCase):
 
         self.assertEqual([], trades)
         self.assertEqual(1, len(skipped))
-        self.assertEqual("spread_below_min", skipped[0].reason)
+        self.assertEqual("spread_below_final_exit", skipped[0].reason)
 
     def test_risk_engine_rejects_insufficient_margin_buffer(self) -> None:
         config = BacktestConfig(
@@ -199,12 +203,34 @@ class BacktestSimulatorTest(unittest.TestCase):
             limit=2,
             backtest_trades=None,
             backtest_skipped=None,
+            paper_db=None,
+            paper_limit=5,
         )
 
         text = build_daily_control_text(args, [])
 
         self.assertIn("Daily Control", text)
         self.assertIn("real orders: disabled", text)
+
+    def test_sqlite_store_persists_open_paper_trade(self) -> None:
+        config = BacktestConfig(min_zscore=0)
+        features = SpreadFeatureEngine(config).update(
+            make_snapshot("2026-01-01T00:00:00+00:00", 3.0)
+        )
+        signal = evaluate_signal(features, config)
+
+        with TemporaryDirectory() as tmp:
+            store = SQLiteStore(Path(tmp) / "paper.sqlite3")
+            try:
+                trade_id = store.insert_open_trade("2026-01-01T00:00:00Z", "SOL|bybit|mexc|SOLUSDT|SOL_USDT", signal)
+                store.commit()
+                trades = store.list_open_trades()
+            finally:
+                store.close()
+
+        self.assertGreater(trade_id, 0)
+        self.assertEqual(1, len(trades))
+        self.assertEqual("SOL", trades[0].base)
 
 
 def make_snapshot(

@@ -60,3 +60,11 @@ python3 -m output.telegram_bot --require-funding-favorable
 ```bash
 python3 -m output.telegram_bot --min-spread 0 --max-spread 100 --min-volume 0 --limit 20
 ```
+
+## Daily control with paper trades
+
+```bash
+python3 -m output.telegram_bot --once --dry-run --daily-control --paper-db data/paper_trading.sqlite3
+```
+
+Remove `--dry-run` after checking the message locally.

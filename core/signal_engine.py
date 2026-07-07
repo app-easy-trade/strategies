@@ -22,10 +22,12 @@ def evaluate_signal(features: SpreadFeatures, config: StrategyConfig) -> TradeSi
         (snapshot.min_quote_volume_24h >= config.liquidity_check_usd, "liquidity_below_min"),
         (risk.passed, risk.reason),
         (execution.passed, execution.reason),
+        (snapshot.spread_pct > config.final_exit_spread_pct, "spread_below_final_exit"),
         (snapshot.spread_pct >= config.min_spread_pct, "spread_below_min"),
         (snapshot.spread_pct <= config.max_spread_pct, "spread_above_max"),
         (passes_zscore(features, config), "zscore_below_min"),
         (passes_velocity(features, config), "velocity_below_min"),
+        (passes_funding(funding.expected_edge_usd, funding.edge_rate, config), "funding_filter_failed"),
         (net_expected >= config.min_net_expected_profit_usd, "net_expected_profit_below_min"),
     ]
     for passed, reason in checks:
@@ -65,6 +67,16 @@ def passes_velocity(features: SpreadFeatures, config: StrategyConfig) -> bool:
     if features.velocity_pct_per_minute is None:
         return False
     return features.velocity_pct_per_minute >= config.min_velocity_pct_per_minute
+
+
+def passes_funding(
+    funding_edge_usd: float,
+    funding_edge_rate: float | None,
+    config: StrategyConfig,
+) -> bool:
+    if config.require_known_funding and funding_edge_rate is None:
+        return False
+    return funding_edge_usd >= -abs(config.max_funding_against_usd)
 
 
 def estimated_round_trip_cost_usd(config: StrategyConfig) -> float:
