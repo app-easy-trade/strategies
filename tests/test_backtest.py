@@ -17,7 +17,7 @@ from core.spread_engine import SpreadFeatureEngine
 from src.spread_history_collector import append_history
 from src.spread_scanner import SpreadRow
 from src.universe import DEFAULT_EXCHANGES, exchange_names
-from output.telegram_bot import build_alert_text, build_daily_control_text
+from output.telegram_bot import build_alert_text, build_daily_control_text, spread_tv_formula
 from storage.sqlite_store import SQLiteStore
 
 
@@ -192,6 +192,11 @@ class BacktestSimulatorTest(unittest.TestCase):
 
         self.assertIn("found spreads 0", text)
         self.assertIn("No spreads above filters", text)
+
+    def test_tradingview_spread_formula_uses_expensive_over_cheap(self) -> None:
+        formula = spread_tv_formula("binance", "BTCUSDT", "bybit", "BTCUSDT")
+
+        self.assertEqual("(BINANCE:BTCUSDT.P/BYBIT:BTCUSDT.P-1)*100", formula)
 
     def test_daily_control_text_includes_execution_status(self) -> None:
         args = Namespace(

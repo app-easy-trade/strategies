@@ -1,239 +1,207 @@
-# Система межбиржевого Spread Arbitrage
-## Концепция
-Система отслеживает расхождение цены одной и той же монеты между двумя биржами, например **MEXC** и **Bybit**, и открывает арбитражную позицию.
-Основная логика:
-- на бирже, где монета дешевле, открывается **LONG**;
-- на бирже, где монета дороже, открывается **SHORT**.
-Стратегия не прогнозирует направление рынка.  
-Торгуется только **spread** между ценами одной и той же монеты на разных биржах.
-Основная идея:
-> Резкий аномальный разлёт цены между биржами часто имеет высокую вероятность частичного или полного сведения.  
-> Система входит двумя ногами и фиксирует прибыль по мере возврата spread.
----
-## 1. Сбор данных
-Система получает данные по каждой монете с обеих бирж:
-- `bid / ask`;
-- `orderbook`;
-- `last price`;
-- `funding`;
-- `fees`;
-- `mark price`;
-- `open interest`;
-- `volume`;
-- `latency`.
-Эти данные используются для расчёта spread, проверки ликвидности, оценки издержек и контроля риска.
----
-## 2. Расчёт spread
-Основной показатель:
+# Crypto Exchange Spread Arbitrage
 
+Проект для поиска и проверки межбиржевого спред-арбитража на perpetual/futures рынках.
+
+Логика модели: покупаем там, где инструмент дешевле, и продаем там, где он дороже. Прибыль ожидается не от направления рынка, а от сужения спреда между двумя биржами.
+
+```text
 spread_pct = (price_expensive / price_cheap - 1) * 100
+```
 
-Где:
+Сейчас проект находится в режиме research/backtest/paper trading. Реальные заявки намеренно отключены.
 
-* price_expensive — цена монеты на бирже, где она дороже;
-* price_cheap — цена монеты на бирже, где она дешевле.
+## Что уже есть
 
-Также строится график spread во времени.
+- Подключения к биржам: Bybit, Bitget, OKX, MEXC, Binance, Hyperliquid, Aster.
+- Сканер спредов между всеми парами подключенных бирж.
+- Сборщик исторических spread snapshots в CSV.
+- Backtest-движок с входами, TP1, финальным выходом, stop по adverse spread, max holding time.
+- Учет комиссий, проскальзывания, funding edge, маржи и риска.
+- SQLite storage для истории спредов, сигналов, пропущенных сигналов, paper trades и order book impact.
+- Paper trading loop: реальные API данные, но виртуальные входы/выходы без заявок.
+- Telegram отчеты: сигналы, daily control, API status, funding summary, backtest report, открытые paper trades.
+- TradingView формулы для проверки спреда руками.
 
-Дополнительно рассчитываются:
+## Биржи и funding
 
-* rolling mean;
-* rolling std;
-* z-score;
-* spread velocity;
-* spread acceleration.
+Funding тянется из публичных API:
 
----
+- Bybit, Bitget, MEXC: из ticker/universe данных.
+- Binance: через `premiumIndex`.
+- Aster: через `premiumIndex`.
+- Hyperliquid: через `metaAndAssetCtxs`.
+- OKX: отдельным enrichment-запросом `funding-rate` для топовых инструментов, потому что OKX требует конкретный `instId`.
 
-## 3. Определение аномального разлёта
+В сигнале используется funding edge:
 
-Система проверяет:
+```text
+funding_edge = short_funding_rate - long_funding_rate
+```
 
-* насколько spread отклонился от своей нормы;
-* насколько быстро произошёл разлёт;
-* является ли движение аномальным относительно истории.
+Если edge положительный, funding помогает сделке. Если отрицательный, funding идет против сделки. Жесткий фильтр можно включить параметром `--require-funding-favorable` в Telegram/scanner режимах или настройками backtest config.
 
-Ключевая идея:
+## Быстрый старт
 
-Если spread резко и сильно расширился, вероятно, в рынке был агрессивный участник или локальный дисбаланс ликвидности.
-После такого движения spread часто начинает сходиться обратно.
+```bash
+python -m src.connection_check --top 5 --timeout 20
+```
 
----
+```bash
+python -m src.spread_scanner --top 50 --limit 20 --min-spread 0.5 --min-volume 400000
+```
 
-## 4. Проверка условий входа
+## Сбор исторических данных
 
-Перед открытием позиции система проверяет:
+```bash
+python -m src.spread_history_collector \
+  --interval 60 \
+  --top 1000 \
+  --min-spread 0.5 \
+  --min-volume 400000 \
+  --output data/spread_history.csv
+```
 
-* достаточный размер spread;
-* достаточный z-score;
-* достаточную скорость разлёта;
-* наличие ликвидности в стакане;
-* доступную маржу;
-* баланс на обеих биржах;
-* отсутствие проблем со стаканом или API.
+История нужна для нормального backtest. Чем длиннее сбор, тем честнее статистика.
 
-Также рассчитываются:
+## Backtest
 
-* комиссии;
-* slippage;
-* funding;
-* ожидаемая прибыль;
-* risk/reward.
+```bash
+python -m backtest.simulator \
+  --input data/spread_history.csv \
+  --trades-csv data/backtest_trades.csv \
+  --skipped-csv data/backtest_skipped_signals.csv
+```
 
-Желательно отбирать сделки с потенциалом не хуже:
+Отчет:
 
-* 1 к 3;
-* лучше — 1 к 5.
+```bash
+python -m backtest.report \
+  --trades-csv data/backtest_trades.csv \
+  --skipped-csv data/backtest_skipped_signals.csv
+```
 
----
+Оптимизация параметров:
 
-## 5. Открытие сделки
+```bash
+python -m backtest.optimizer --input data/spread_history.csv
+```
 
-Если все условия выполнены:
+Основной config: `config/backtest.yaml`.
 
-* открывается LONG там, где монета дешевле;
-* открывается SHORT там, где монета дороже.
+## Paper trading
 
-Позиции должны открываться одновременно.
+Paper trading берет реальные данные с бирж, но не выставляет заявки. Сделки пишутся в SQLite.
 
-Если одна нога не открылась:
+```bash
+python -m paper.paper_trader \
+  --db data/paper_trading.sqlite3 \
+  --interval 60 \
+  --top 1000 \
+  --limit 50 \
+  --min-spread 0.5 \
+  --min-volume 400000 \
+  --capture-orderbooks
+```
 
-* вторая нога сразу закрывается;
-* либо позиция хеджируется другим способом.
+Order book impact сохраняется для размеров $200, $500 и $1000.
 
-На старте размер позиции:
+## Telegram bot
 
-$200–300 на одну ногу
+Бот сейчас работает как процесс-отправитель отчетов. То есть команды запускаются в терминале, а сообщения приходят в Telegram. Slash-команды внутри Telegram чата пока не включены.
 
-При таком размере проблем с ликвидностью быть не должно.
+Получить `chat_id`:
 
----
+```bash
+TELEGRAM_BOT_TOKEN="YOUR_TOKEN" python -m output.telegram_bot --get-chat-id
+```
 
-## 6. Управление позицией
+`.env` в корне проекта:
 
-Используется частичная фиксация прибыли.
+```bash
+TELEGRAM_BOT_TOKEN=YOUR_TOKEN
+TELEGRAM_CHAT_ID=YOUR_CHAT_ID
+```
+
+Разовый сухой прогон без отправки:
+
+```bash
+python -m output.telegram_bot --once --dry-run
+```
+
+Разовая отправка:
+
+```bash
+python -m output.telegram_bot --once
+```
+
+Постоянные сигналы каждые 5 минут:
+
+```bash
+python -m output.telegram_bot
+```
+
+Daily control с открытыми paper trades:
+
+```bash
+python -m output.telegram_bot \
+  --daily-control \
+  --paper-db data/paper_trading.sqlite3 \
+  --interval 86400
+```
+
+Разовый daily control для проверки:
+
+```bash
+python -m output.telegram_bot \
+  --once \
+  --dry-run \
+  --daily-control \
+  --paper-db data/paper_trading.sqlite3
+```
+
+Поддерживаемые режимы Telegram CLI:
+
+- `--get-chat-id` - показать chat id после сообщения боту.
+- `--once` - выполнить один цикл и выйти.
+- `--dry-run` - напечатать отчет в консоль без отправки.
+- `--daily-control` - отправить расширенный контрольный отчет.
+- `--paper-db` - добавить открытые paper trades из SQLite.
+- `--backtest-trades` и `--backtest-skipped` - добавить backtest report.
+- `--require-funding-favorable` - показывать только сделки с funding в нашу сторону.
+- `--min-spread`, `--max-spread`, `--min-volume`, `--limit`, `--top`, `--interval` - управлять фильтрами и частотой.
+
+## TradingView формула
+
+В Telegram для каждой сделки добавляется строка:
+
+```text
+TV: (EXPENSIVE_EXCHANGE:SYMBOL/CHEAP_EXCHANGE:SYMBOL-1)*100
+```
 
 Пример:
 
-Вход: spread = 5%
-TP1: spread = 2.5%
+```text
+TV: (BINANCE:BTCUSDT.P/BYBIT:BTCUSDT.P-1)*100
+```
 
-На первом тейке закрывается:
+Это соответствует нашей формуле спреда:
 
-50% позиции
+```text
+(цена дорогой биржи / цена дешевой биржи - 1) * 100
+```
 
-Оставшаяся часть позиции удерживается до дальнейшего сведения spread или до появления условий для выхода.
+Иногда TradingView использует другие тикеры для отдельных бирж или инструментов. Маппинг сделан централизованно в `output/telegram_bot.py`, чтобы его можно было быстро поправить.
 
----
+## Порядок перед реальной торговлей
 
-## 7. Финальный выход
+1. Собрать историю через `spread_history_collector`.
+2. Прогнать backtest и optimizer.
+3. Запустить paper trading на реальных API данных.
+4. Проверить Telegram daily reports и открытые virtual trades.
+5. Сравнить топ-сделки вручную в TradingView по формуле из бота.
+6. Подключить read-only authenticated checks: balances, margin, positions.
+7. Только после этого делать order executor: testnet/demo, затем минимальный real size.
 
-Полное сведение spread до 0 не является обязательным.
+## Важно
 
-Решение о выходе принимается по следующим факторам:
-
-* состояние стакана;
-* скорость сведения spread;
-* funding;
-* время удержания позиции;
-* ликвидность;
-* поведение spread после входа.
-
-Если spread перестал сходиться или funding становится невыгодным, позиция закрывается.
-
----
-
-## 8. Ограничение риска
-
-Max Adverse Spread
-
-Если spread продолжает расширяться сверх заданного лимита, позиция принудительно закрывается.
-
-Лимит нужно рассчитывать относительно:
-
-* размера депозита;
-* риска на сделку;
-* текущей волатильности spread;
-* ликвидности инструмента.
-
-Max Holding Time
-
-Если spread не свёлся за допустимое время, система выполняет частичный или полный выход.
-
-Funding Protection
-
-Система учитывает:
-
-* размер funding;
-* направление funding;
-* время его начисления;
-* влияние funding на итоговую прибыльность сделки.
-
-Execution Protection
-
-Перед входом и во время сделки проверяются:
-
-* исполнимость обеих ног;
-* состояние API;
-* актуальность стакана;
-* задержки;
-* доступная ликвидность.
-
-Если открылась только одна нога, вторая позиция закрывается или срочно хеджируется.
-
----
-
-## 9. MVP-версия
-
-На первом этапе используются две биржи:
-
-* MEXC;
-* Bybit.
-
-В дальнейшем список можно расширить до 4 и более бирж.
-
-Основной функционал MVP:
-
-* spread scanner;
-* spread graph;
-* z-score;
-* velocity analysis;
-* liquidity analysis;
-* funding calculation;
-* signal engine;
-* simultaneous execution;
-* partial take profit;
-* risk manager;
-* paper trading.
-
----
-
-## 10. Главная задача модели
-
-Модель должна определять, имеет ли текущий spread высокую вероятность прибыльного сведения.
-
-При оценке учитываются:
-
-* ликвидность;
-* скорость разлёта;
-* funding;
-* комиссии;
-* риск дальнейшего расширения spread;
-* ожидаемое время удержания;
-* потенциальная прибыль;
-* expected value сделки.
-
-Если вероятность сведения высокая и expected value положительный, система открывает арбитражную позицию.
-
----
-
-# Общая логика стратегии
-
-1. Получить данные с двух бирж.
-2. Рассчитать spread.
-3. Найти аномальное расширение spread.
-4. Проверить ликвидность, комиссии, funding и риск.
-5. Открыть LONG на дешёвой бирже и SHORT на дорогой.
-6. Частично зафиксировать прибыль при сведении spread.
-7. Закрыть остаток позиции по сигналу выхода.
-8. Ограничить убыток, если spread продолжает расширяться.
+Реальные заявки сейчас отключены. Проект пока не должен торговать настоящими деньгами без отдельного блока order executor, testnet/demo проверки, контроля частичных исполнений и аварийного закрытия одной ноги.

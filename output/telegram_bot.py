@@ -22,6 +22,17 @@ TELEGRAM_API_BASE = "https://api.telegram.org"
 MAX_TELEGRAM_MESSAGE_LEN = 4096
 
 
+TV_EXCHANGE_PREFIXES = {
+    "aster": "ASTERDEX",
+    "binance": "BINANCE",
+    "bitget": "BITGET",
+    "bybit": "BYBIT",
+    "hyperliquid": "HYPERLIQUID",
+    "mexc": "MEXC",
+    "okx": "OKX",
+}
+
+
 class TelegramBotError(RuntimeError):
     """Raised when Telegram Bot API returns an unusable response."""
 
@@ -154,6 +165,9 @@ def build_alert_text(
         lines.append(f"   SHORT {row.short_exchange} {row.short_symbol} bid={row.short_bid:.8g}")
         lines.append(f"   minVol24h={row.min_quote_volume_24h:.2f}")
         lines.append(f"   funding={format_funding_edge(row)} {row.funding_status}")
+        lines.append(
+            f"   TV: {spread_tv_formula(row.short_exchange, row.short_symbol, row.long_exchange, row.long_symbol)}"
+        )
 
     if len(rows) > limit:
         lines.append("")
@@ -182,6 +196,9 @@ def build_daily_control_text(args: argparse.Namespace, rows: list[SpreadRow]) ->
             f"{index}. {row.base} {row.long_exchange}->{row.short_exchange} "
             f"spread={row.spread_pct:.4f}% funding={format_funding_edge(row)} "
             f"{row.funding_status} vol={row.min_quote_volume_24h:.0f}"
+        )
+        lines.append(
+            f"   TV: {spread_tv_formula(row.short_exchange, row.short_symbol, row.long_exchange, row.long_symbol)}"
         )
 
     funding_counts = {
@@ -241,9 +258,37 @@ def build_paper_trades_text(db_path: Path, limit: int) -> str:
             f"remaining={trade.remaining_fraction:.2f} tp1={trade.tp1_done} "
             f"ev={trade.entry_net_expected_profit_usd:.4f} entry_time={trade.entry_time}"
         )
+        lines.append(
+            f"   TV: {spread_tv_formula(trade.short_exchange, trade.short_symbol, trade.long_exchange, trade.long_symbol)}"
+        )
     if len(trades) > limit:
         lines.append(f"- hidden: {len(trades) - limit}")
     return "\n".join(lines)
+
+
+def spread_tv_formula(
+    expensive_exchange: str,
+    expensive_symbol: str,
+    cheap_exchange: str,
+    cheap_symbol: str,
+) -> str:
+    expensive = tradingview_symbol(expensive_exchange, expensive_symbol)
+    cheap = tradingview_symbol(cheap_exchange, cheap_symbol)
+    return f"({expensive}/{cheap}-1)*100"
+
+
+def tradingview_symbol(exchange: str, symbol: str) -> str:
+    prefix = TV_EXCHANGE_PREFIXES.get(exchange.lower(), exchange.upper())
+    normalized = normalize_tv_symbol(symbol)
+    if exchange.lower() in {"aster", "binance", "bitget", "bybit", "mexc", "okx"}:
+        return f"{prefix}:{normalized}.P"
+    return f"{prefix}:{normalized}"
+
+
+def normalize_tv_symbol(symbol: str) -> str:
+    value = symbol.upper().strip()
+    value = value.removesuffix("-SWAP").removesuffix("_SWAP")
+    return value.replace("-", "").replace("_", "")
 
 
 def run_once(args: argparse.Namespace, token: str | None, chat_id: str | None) -> list[SpreadRow]:

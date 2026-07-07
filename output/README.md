@@ -1,17 +1,19 @@
 # Telegram output
 
-Папка `output` отвечает за отправку найденных spread-разлетов наружу.
+`output/telegram_bot.py` отправляет spread-сигналы и контрольные отчеты в Telegram.
 
-## Что нужно подключить
+Сейчас бот работает как CLI-процесс: команды запускаются в терминале, а бот отправляет сообщения в Telegram. Slash-команды внутри чата (`/start`, `/paper`, `/daily`) пока не реализованы.
 
-1. В Telegram открыть `@BotFather`.
+## Подключение
+
+1. Открыть `@BotFather` в Telegram.
 2. Создать бота командой `/newbot`.
 3. Скопировать bot token.
-4. Написать созданному боту любое сообщение, например `start`.
-5. Получить `chat_id` командой:
+4. Написать созданному боту любое сообщение.
+5. Получить `chat_id`:
 
 ```bash
-TELEGRAM_BOT_TOKEN="YOUR_TOKEN" python3 -m output.telegram_bot --get-chat-id
+TELEGRAM_BOT_TOKEN="YOUR_TOKEN" python -m output.telegram_bot --get-chat-id
 ```
 
 6. Создать `.env` в корне проекта:
@@ -21,50 +23,130 @@ TELEGRAM_BOT_TOKEN=YOUR_TOKEN
 TELEGRAM_CHAT_ID=YOUR_CHAT_ID
 ```
 
-## Разовый тест без отправки
+## Поддерживаемые команды запуска
+
+Проверка без отправки:
 
 ```bash
-python3 -m output.telegram_bot --once --dry-run
+python -m output.telegram_bot --once --dry-run
 ```
 
-## Разовая отправка в Telegram
+Разовая отправка текущих сигналов:
 
 ```bash
-python3 -m output.telegram_bot --once
+python -m output.telegram_bot --once
 ```
 
-## Отправка каждые 5 минут
+Постоянный режим, по умолчанию каждые 300 секунд:
 
 ```bash
-python3 -m output.telegram_bot
+python -m output.telegram_bot
 ```
 
-По умолчанию бот:
-
-- каждые `300` секунд выгружает до top-1000 тикеров;
-- считает spread между всеми парами бирж;
-- отправляет top-10 разлетов;
-- фильтрует `spread >= 0.5%`, `spread <= 5%`, `minVol24h >= 1_000_000`;
-- добавляет в сообщение funding edge: `short_funding_rate - long_funding_rate`.
-
-Funding edge сейчас показывает направление текущего funding rate. Он еще не нормализует разные интервалы funding и не прогнозирует, сколько начислений позиция успеет пересечь.
-
-Только сделки, где funding явно в нашу сторону:
+Daily control:
 
 ```bash
-python3 -m output.telegram_bot --require-funding-favorable
+python -m output.telegram_bot --once --daily-control
 ```
 
-Более шумный режим:
+Daily control с открытыми paper-сделками из SQLite:
 
 ```bash
-python3 -m output.telegram_bot --min-spread 0 --max-spread 100 --min-volume 0 --limit 20
+python -m output.telegram_bot \
+  --once \
+  --daily-control \
+  --paper-db data/paper_trading.sqlite3
 ```
 
-## Daily control with paper trades
+Daily control каждый день:
 
 ```bash
-python3 -m output.telegram_bot --once --dry-run --daily-control --paper-db data/paper_trading.sqlite3
+python -m output.telegram_bot \
+  --daily-control \
+  --paper-db data/paper_trading.sqlite3 \
+  --interval 86400
 ```
 
-Remove `--dry-run` after checking the message locally.
+Добавить backtest report:
+
+```bash
+python -m output.telegram_bot \
+  --once \
+  --daily-control \
+  --backtest-trades data/backtest_trades.csv \
+  --backtest-skipped data/backtest_skipped_signals.csv
+```
+
+Показывать только сделки, где funding явно в нашу сторону:
+
+```bash
+python -m output.telegram_bot --require-funding-favorable
+```
+
+Ослабить фильтры для теста:
+
+```bash
+python -m output.telegram_bot \
+  --once \
+  --dry-run \
+  --daily-control \
+  --min-spread 0.5 \
+  --max-spread 10 \
+  --min-volume 0 \
+  --limit 10
+```
+
+## Что приходит в Telegram
+
+Обычный отчет по сигналам:
+
+- base asset;
+- spread percent;
+- LONG leg: биржа, символ, ask;
+- SHORT leg: биржа, символ, bid;
+- min 24h volume;
+- funding edge и funding status;
+- TradingView формула спреда.
+
+Daily control:
+
+- API status по каждой бирже;
+- количество сигналов после фильтров;
+- funding summary;
+- backtest report, если переданы CSV;
+- открытые paper trades, если передан `--paper-db`;
+- статус исполнения реальных заявок.
+
+## TradingView формула
+
+Для каждого сигнала бот добавляет строку:
+
+```text
+TV: (EXPENSIVE_EXCHANGE:SYMBOL/CHEAP_EXCHANGE:SYMBOL-1)*100
+```
+
+Пример:
+
+```text
+TV: (BINANCE:BTCUSDT.P/BYBIT:BTCUSDT.P-1)*100
+```
+
+Это показывает тот же spread, который использует модель:
+
+```text
+(цена дорогой биржи / цена дешевой биржи - 1) * 100
+```
+
+Для открытых paper trades формула также выводится в блоке `Open paper trades`.
+
+## Основные параметры
+
+- `--exchanges` - список бирж через запятую. По умолчанию: `bybit,bitget,okx,mexc,binance,hyperliquid,aster`.
+- `--top` - сколько рынков брать с каждой биржи.
+- `--limit` - сколько строк показывать в Telegram.
+- `--min-spread` - минимальный spread.
+- `--max-spread` - максимальный spread.
+- `--min-volume` - минимальный 24h quote volume.
+- `--interval` - пауза между отчетами в секундах.
+- `--paper-db` - SQLite база paper trading.
+- `--csv` - куда сохранить последнюю таблицу сигналов.
