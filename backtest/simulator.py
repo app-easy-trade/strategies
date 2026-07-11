@@ -136,6 +136,8 @@ def snapshot_from_row(row: dict[str, str]) -> SpreadSnapshot:
         short_depth_usd_100=optional_float(row.get("short_depth_usd_100")),
         long_depth_usd_200=optional_float(row.get("long_depth_usd_200")),
         short_depth_usd_200=optional_float(row.get("short_depth_usd_200")),
+        long_depth_usd_500=optional_float(row.get("long_depth_usd_500")),
+        short_depth_usd_500=optional_float(row.get("short_depth_usd_500")),
         long_depth_usd_1000=optional_float(row.get("long_depth_usd_1000")),
         short_depth_usd_1000=optional_float(row.get("short_depth_usd_1000")),
     )

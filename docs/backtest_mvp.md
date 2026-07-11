@@ -64,6 +64,23 @@ For a single smoke-test snapshot:
 python -m src.spread_history_collector --once --top 20 --limit 10 --min-spread 0 --min-volume 0 --output data/test_spread_history.csv
 ```
 
+For execution-aware history with order book depth:
+
+```powershell
+python -m src.spread_history_collector --interval 60 --top 1000 --limit 50 --min-spread 0.5 --min-volume 400000 --capture-orderbooks --orderbook-limit 20 --output data/spread_history_enriched.csv
+```
+
+This writes executable spread and depth columns for $100/$200/$500/$1000:
+
+- `executable_spread_100_pct`;
+- `executable_spread_200_pct`;
+- `executable_spread_500_pct`;
+- `executable_spread_1000_pct`;
+- `long_depth_usd_100`, `short_depth_usd_100`;
+- `long_depth_usd_200`, `short_depth_usd_200`;
+- `long_depth_usd_500`, `short_depth_usd_500`;
+- `long_depth_usd_1000`, `short_depth_usd_1000`.
+
 ## Run backtest
 
 ```powershell

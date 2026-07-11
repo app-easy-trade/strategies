@@ -28,6 +28,8 @@ class SpreadSnapshot:
     short_depth_usd_100: float | None = None
     long_depth_usd_200: float | None = None
     short_depth_usd_200: float | None = None
+    long_depth_usd_500: float | None = None
+    short_depth_usd_500: float | None = None
     long_depth_usd_1000: float | None = None
     short_depth_usd_1000: float | None = None
 
@@ -59,6 +61,8 @@ class SpreadSnapshot:
             return self.long_depth_usd_100 if side == "long" else self.short_depth_usd_100
         if notional_usd <= 200:
             return self.long_depth_usd_200 if side == "long" else self.short_depth_usd_200
+        if notional_usd <= 500:
+            return self.long_depth_usd_500 if side == "long" else self.short_depth_usd_500
         if notional_usd <= 1000:
             return self.long_depth_usd_1000 if side == "long" else self.short_depth_usd_1000
         return None
