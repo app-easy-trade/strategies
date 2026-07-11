@@ -13,7 +13,14 @@ from urllib.request import Request, urlopen
 from backtest.report import build_report, format_report
 from src.connection_check import check_exchange
 from src.spread_monitor import filter_rows
-from src.spread_scanner import DEFAULT_TOP, SpreadRow, format_funding_edge, scan_spreads, write_csv
+from src.spread_scanner import (
+    DEFAULT_MAX_SANE_SPREAD_PCT,
+    DEFAULT_TOP,
+    SpreadRow,
+    format_funding_edge,
+    scan_spreads,
+    write_csv,
+)
 from src.universe import exchange_names
 from storage.sqlite_store import SQLiteStore
 
@@ -127,6 +134,7 @@ def collect_rows(args: argparse.Namespace) -> list[SpreadRow]:
         quote=args.quote.upper(),
         top=args.top,
         timeout=args.timeout,
+        max_sane_spread_pct=args.max_sane_spread,
     )
     return filter_rows(
         rows,
@@ -362,6 +370,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-volume", type=float, default=1_000_000)
     parser.add_argument("--require-funding-favorable", action="store_true")
     parser.add_argument("--timeout", type=float, default=10.0)
+    parser.add_argument(
+        "--max-sane-spread",
+        type=float,
+        default=DEFAULT_MAX_SANE_SPREAD_PCT,
+        help="Drop likely incompatible contracts above this spread percent; <=0 disables.",
+    )
     parser.add_argument("--health-top", type=int, default=25, help="Top markets per exchange for daily API checks.")
     parser.add_argument("--telegram-timeout", type=float, default=20.0)
     parser.add_argument("--csv", default="data/telegram_spreads_latest.csv")

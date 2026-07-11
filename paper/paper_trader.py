@@ -14,7 +14,7 @@ from core.models import SpreadSnapshot
 from core.signal_engine import evaluate_signal
 from core.spread_engine import SpreadFeatureEngine
 from src.spread_monitor import filter_rows
-from src.spread_scanner import DEFAULT_TOP, SpreadRow, scan_spreads
+from src.spread_scanner import DEFAULT_MAX_SANE_SPREAD_PCT, DEFAULT_TOP, SpreadRow, scan_spreads
 from src.universe import exchange_names
 from storage.sqlite_store import OpenPaperTrade, SQLiteStore
 
@@ -115,6 +115,7 @@ def run_once(args: argparse.Namespace, config: StrategyConfig, store: SQLiteStor
         top=args.top,
         timeout=args.timeout,
         allow_partial=True,
+        max_sane_spread_pct=args.max_sane_spread,
     )
     rows_by_key = {trade_key(row): row for row in rows_all}
     entry_rows = filter_rows(
@@ -326,6 +327,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--capture-orderbooks", action="store_true")
     parser.add_argument("--close-missing", action="store_true")
     parser.add_argument("--timeout", type=float, default=10.0)
+    parser.add_argument(
+        "--max-sane-spread",
+        type=float,
+        default=DEFAULT_MAX_SANE_SPREAD_PCT,
+        help="Drop likely incompatible contracts above this spread percent; <=0 disables.",
+    )
     parser.add_argument("--interval", type=int, default=60)
     parser.add_argument("--once", action="store_true")
     return parser

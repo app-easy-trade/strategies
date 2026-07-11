@@ -5,7 +5,14 @@ from datetime import datetime
 from pathlib import Path
 from time import sleep
 
-from .spread_scanner import DEFAULT_TOP, SpreadRow, format_funding_edge, scan_spreads, write_csv
+from .spread_scanner import (
+    DEFAULT_MAX_SANE_SPREAD_PCT,
+    DEFAULT_TOP,
+    SpreadRow,
+    format_funding_edge,
+    scan_spreads,
+    write_csv,
+)
 from .universe import exchange_names
 
 
@@ -55,6 +62,7 @@ def run_once(args: argparse.Namespace) -> list[SpreadRow]:
         quote=args.quote.upper(),
         top=args.top,
         timeout=args.timeout,
+        max_sane_spread_pct=args.max_sane_spread,
     )
     rows = filter_rows(
         rows,
@@ -84,6 +92,12 @@ def main() -> None:
     parser.add_argument("--min-volume", type=float, default=1_000_000)
     parser.add_argument("--require-funding-favorable", action="store_true")
     parser.add_argument("--timeout", type=float, default=10.0)
+    parser.add_argument(
+        "--max-sane-spread",
+        type=float,
+        default=DEFAULT_MAX_SANE_SPREAD_PCT,
+        help="Drop likely incompatible contracts above this spread percent; <=0 disables.",
+    )
     parser.add_argument("--csv", default="data/spreads_latest.csv")
     parser.add_argument("--once", action="store_true", help="Run one check and exit.")
     args = parser.parse_args()

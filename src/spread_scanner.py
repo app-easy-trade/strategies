@@ -19,6 +19,7 @@ from brokers.common import http_get_json, to_float, to_int
 
 DEFAULT_TOP = 1000
 OKX_FUNDING_ENRICH_LIMIT = 200
+DEFAULT_MAX_SANE_SPREAD_PCT = 100.0
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,7 @@ def scan_spreads(
     top: int = DEFAULT_TOP,
     timeout: float = 10.0,
     allow_partial: bool = False,
+    max_sane_spread_pct: float | None = DEFAULT_MAX_SANE_SPREAD_PCT,
 ) -> tuple[list[SpreadRow], dict[str, list[TickerQuote]]]:
     top_by_exchange = fetch_top_tickers(exchanges, quote, top, timeout, allow_partial)
     rows: list[SpreadRow] = []
@@ -60,7 +62,7 @@ def scan_spreads(
         left = {ticker.base: ticker for ticker in top_by_exchange[left_name]}
         right = {ticker.base: ticker for ticker in top_by_exchange[right_name]}
         for base in sorted(left.keys() & right.keys()):
-            best = best_direction(left[base], right[base])
+            best = best_direction(left[base], right[base], max_sane_spread_pct)
             if best:
                 rows.append(best)
 
@@ -143,10 +145,22 @@ def fetch_okx_funding_rate(symbol: str, timeout: float) -> tuple[float | None, i
     return to_float(item.get("fundingRate")), to_int(item.get("nextFundingTime"))
 
 
-def best_direction(left: TickerQuote, right: TickerQuote) -> SpreadRow | None:
+def best_direction(
+    left: TickerQuote,
+    right: TickerQuote,
+    max_sane_spread_pct: float | None = DEFAULT_MAX_SANE_SPREAD_PCT,
+) -> SpreadRow | None:
     options = [
-        build_spread_row(long_ticker=left, short_ticker=right),
-        build_spread_row(long_ticker=right, short_ticker=left),
+        build_spread_row(
+            long_ticker=left,
+            short_ticker=right,
+            max_sane_spread_pct=max_sane_spread_pct,
+        ),
+        build_spread_row(
+            long_ticker=right,
+            short_ticker=left,
+            max_sane_spread_pct=max_sane_spread_pct,
+        ),
     ]
     valid = [row for row in options if row is not None]
     if not valid:
@@ -157,6 +171,7 @@ def best_direction(left: TickerQuote, right: TickerQuote) -> SpreadRow | None:
 def build_spread_row(
     long_ticker: TickerQuote,
     short_ticker: TickerQuote,
+    max_sane_spread_pct: float | None = DEFAULT_MAX_SANE_SPREAD_PCT,
 ) -> SpreadRow | None:
     if long_ticker.ask is None or short_ticker.bid is None:
         return None
@@ -164,6 +179,8 @@ def build_spread_row(
         return None
 
     spread_pct = (short_ticker.bid / long_ticker.ask - 1) * 100
+    if not sane_spread(spread_pct, max_sane_spread_pct):
+        return None
     long_volume = long_ticker.quote_volume_24h or 0.0
     short_volume = short_ticker.quote_volume_24h or 0.0
     funding_edge_pct = calculate_funding_edge_pct(
@@ -190,6 +207,12 @@ def build_spread_row(
         long_timestamp_ms=long_ticker.timestamp_ms,
         short_timestamp_ms=short_ticker.timestamp_ms,
     )
+
+
+def sane_spread(spread_pct: float, max_sane_spread_pct: float | None) -> bool:
+    if max_sane_spread_pct is None or max_sane_spread_pct <= 0:
+        return True
+    return spread_pct <= max_sane_spread_pct
 
 
 def calculate_funding_edge_pct(
@@ -270,6 +293,12 @@ def main() -> None:
     parser.add_argument("--csv", type=Path, default=Path("data/spreads_top1000.csv"))
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--allow-partial", action="store_true", help="Continue if one exchange fails.")
+    parser.add_argument(
+        "--max-sane-spread",
+        type=float,
+        default=DEFAULT_MAX_SANE_SPREAD_PCT,
+        help="Drop likely incompatible contracts above this spread percent; <=0 disables.",
+    )
     args = parser.parse_args()
 
     exchanges = exchange_names(args.exchanges)
@@ -279,6 +308,7 @@ def main() -> None:
         top=args.top,
         timeout=args.timeout,
         allow_partial=args.allow_partial,
+        max_sane_spread_pct=args.max_sane_spread,
     )
     if args.min_spread is not None:
         rows = [row for row in rows if row.spread_pct >= args.min_spread]

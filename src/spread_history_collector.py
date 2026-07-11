@@ -12,7 +12,13 @@ from brokers.common import MarketSnapshot
 from core.liquidity_engine import estimate_price_impact
 
 from .spread_monitor import filter_rows
-from .spread_scanner import DEFAULT_TOP, SPREAD_FIELDNAMES, SpreadRow, scan_spreads
+from .spread_scanner import (
+    DEFAULT_MAX_SANE_SPREAD_PCT,
+    DEFAULT_TOP,
+    SPREAD_FIELDNAMES,
+    SpreadRow,
+    scan_spreads,
+)
 from .universe import exchange_names
 
 
@@ -68,6 +74,7 @@ def collect_once(args: argparse.Namespace) -> list[dict[str, object]]:
         quote=args.quote.upper(),
         top=args.top,
         timeout=args.timeout,
+        max_sane_spread_pct=args.max_sane_spread,
     )
     rows = filter_rows(
         rows,
@@ -196,6 +203,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-volume", type=float, default=400_000)
     parser.add_argument("--require-funding-favorable", action="store_true")
     parser.add_argument("--timeout", type=float, default=10.0)
+    parser.add_argument(
+        "--max-sane-spread",
+        type=float,
+        default=DEFAULT_MAX_SANE_SPREAD_PCT,
+        help="Drop likely incompatible contracts above this spread percent; <=0 disables.",
+    )
     parser.add_argument("--output", default="data/spread_history.csv")
     parser.add_argument("--capture-orderbooks", action="store_true")
     parser.add_argument(

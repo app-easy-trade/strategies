@@ -21,7 +21,7 @@ from core.risk_engine import evaluate_risk
 from core.signal_engine import evaluate_signal
 from core.spread_engine import SpreadFeatureEngine
 from src.spread_history_collector import append_history
-from src.spread_scanner import SpreadRow
+from src.spread_scanner import SpreadRow, sane_spread
 from src.universe import DEFAULT_EXCHANGES, exchange_names
 from output.telegram_bot import build_alert_text, build_daily_control_text, spread_tv_formula
 from storage.sqlite_store import SQLiteStore
@@ -198,6 +198,11 @@ class BacktestSimulatorTest(unittest.TestCase):
         self.assertIn("binance", DEFAULT_EXCHANGES)
         self.assertIn("hyperliquid", DEFAULT_EXCHANGES)
         self.assertIn("aster", DEFAULT_EXCHANGES)
+
+    def test_sanity_filter_keeps_extreme_but_drops_incompatible_contracts(self) -> None:
+        self.assertTrue(sane_spread(12.0, 100.0))
+        self.assertFalse(sane_spread(56_516.0, 100.0))
+        self.assertTrue(sane_spread(56_516.0, 0.0))
 
     def test_optimizer_returns_ranked_results(self) -> None:
         results = optimize(
