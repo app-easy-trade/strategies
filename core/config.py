@@ -28,6 +28,9 @@ class StrategyConfig:
     limit_order_timeout_seconds: int = 5
     market_fallback_enabled: bool = True
     one_leg_timeout_seconds: int = 5
+    execution_simulation_enabled: bool = True
+    min_execution_fill_fraction: float = 0.95
+    one_leg_failure_penalty_pct: float = 0.15
     tp1_close_fraction: float = 0.5
     tp1_retrace_fraction: float = 0.5
     final_exit_spread_pct: float = 0.5

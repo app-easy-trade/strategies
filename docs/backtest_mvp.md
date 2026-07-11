@@ -15,6 +15,9 @@ It accounts for:
 - dynamic exit after TP1 when spread rebounds after a profitable compression;
 - funding exit before a bad funding event;
 - optional hold through a near positive funding event;
+- execution simulation with depth-aware full/partial/failed fills when depth
+  columns are available;
+- one-leg failure detection when one side has no executable depth;
 - stop by maximum adverse spread expansion;
 - maximum holding time as an emergency limit;
 - maker/taker fees;
@@ -90,8 +93,22 @@ The trade CSV includes:
 - `market_mode`;
 - `entry_executable_spread_pct`;
 - `exit_executable_spread_pct`;
+- `execution_status`;
+- `execution_reason`;
+- `execution_fill_fraction`;
+- `execution_cost_usd`;
 - `funding_events`;
 - `seconds_to_first_funding`.
+
+The report includes:
+
+- net PnL, win rate, profit factor and max drawdown;
+- expectancy, median PnL, p10/p90 PnL, best/worst trade;
+- average win/loss, payoff ratio, max win/loss streak;
+- average/median holding time;
+- total fees, slippage, execution cost and funding PnL;
+- TP1 count and average execution fill;
+- PnL by exit reason, pair, coin, spread category and market mode.
 
 ## Telegram reports
 

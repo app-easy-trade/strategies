@@ -141,6 +141,24 @@ class BacktestSimulatorTest(unittest.TestCase):
         self.assertEqual(0, funding_events_crossed(entry, before_funding, config))
         self.assertEqual(1, funding_events_crossed(entry, after_funding, config))
 
+    def test_execution_simulator_skips_unfilled_leg(self) -> None:
+        snapshot = make_snapshot("2026-01-01T00:00:00+00:00", 4.0)
+        snapshot = SpreadSnapshot(
+            **{
+                **snapshot.__dict__,
+                "long_depth_usd_200": 200.0,
+                "short_depth_usd_200": 0.0,
+            }
+        )
+
+        trades, _, skipped = run_backtest(
+            [snapshot],
+            BacktestConfig(min_zscore=0, position_notional_usd=200),
+        )
+
+        self.assertEqual([], trades)
+        self.assertEqual("one_leg_unfilled", skipped[0].reason)
+
     def test_risk_engine_rejects_insufficient_margin_buffer(self) -> None:
         config = BacktestConfig(
             position_notional_usd=200,

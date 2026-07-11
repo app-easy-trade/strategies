@@ -22,6 +22,7 @@ load_config = load_strategy_config
 @dataclass
 class OpenTrade:
     entry_signal: TradeSignal
+    execution: ExecutionSimulation
     remaining_fraction: float = 1.0
     realized_pnl_usd: float = 0.0
     tp1_done: bool = False
@@ -52,14 +53,19 @@ class ClosedTrade:
     fees_usd: float
     slippage_usd: float
     funding_pnl_usd: float
+    execution_cost_usd: float
     net_pnl_usd: float
     exit_reason: str
+    tp1_done: bool
     entry_zscore: float | None
     entry_velocity_pct_per_minute: float | None
     entry_category: str
     market_mode: str
     entry_executable_spread_pct: float
     exit_executable_spread_pct: float
+    execution_status: str
+    execution_reason: str
+    execution_fill_fraction: float
     funding_events: int
     seconds_to_first_funding: float | None
     entry_net_expected_profit_usd: float
@@ -83,6 +89,15 @@ class SkippedSignal:
     estimated_cost_usd: float
     funding_edge_usd: float
     net_expected_profit_usd: float
+
+
+@dataclass(frozen=True)
+class ExecutionSimulation:
+    passed: bool
+    status: str
+    reason: str
+    fill_fraction: float
+    cost_usd: float
 
 
 def read_snapshots(path: Path) -> list[SpreadSnapshot]:
@@ -142,14 +157,16 @@ def run_backtest(
         trade = open_trades.get(snapshot.key)
         if trade is None:
             signal = evaluate_signal(features, config)
-            if signal.should_enter:
+            execution = simulate_entry_execution(snapshot, config)
+            if signal.should_enter and execution.passed:
                 open_trades[snapshot.key] = OpenTrade(
                     entry_signal=signal,
+                    execution=execution,
                     max_spread_pct=snapshot.spread_pct,
                     min_spread_pct=snapshot.spread_pct,
                 )
             else:
-                skipped.append(skipped_signal(signal))
+                skipped.append(skipped_signal(signal, execution))
             continue
 
         trade.max_spread_pct = max(trade.max_spread_pct, snapshot.spread_pct)
@@ -189,6 +206,68 @@ def should_take_tp1(
         return False
     target = trade.entry.spread_pct * (1 - config.tp1_retrace_fraction)
     return snapshot.spread_pct <= target
+
+
+def simulate_entry_execution(
+    snapshot: SpreadSnapshot,
+    config: BacktestConfig,
+) -> ExecutionSimulation:
+    if not config.execution_simulation_enabled:
+        return ExecutionSimulation(True, "full", "simulation_disabled", 1.0, 0.0)
+
+    long_depth = snapshot.depth_usd_for("long", config.position_notional_usd)
+    short_depth = snapshot.depth_usd_for("short", config.position_notional_usd)
+    if long_depth is None and short_depth is None:
+        executable_spread = snapshot.executable_spread_pct_for(config.position_notional_usd)
+        return ExecutionSimulation(
+            passed=True,
+            status="full",
+            reason="top_of_book_fallback",
+            fill_fraction=1.0,
+            cost_usd=execution_spread_cost_usd(snapshot.spread_pct, executable_spread, config),
+        )
+
+    long_fill = fill_fraction(long_depth, config.position_notional_usd)
+    short_fill = fill_fraction(short_depth, config.position_notional_usd)
+    if long_fill <= 0 or short_fill <= 0:
+        return ExecutionSimulation(
+            passed=False,
+            status="failed",
+            reason="one_leg_unfilled",
+            fill_fraction=0.0,
+            cost_usd=config.position_notional_usd * config.one_leg_failure_penalty_pct / 100,
+        )
+
+    fill = min(long_fill, short_fill)
+    executable_spread = snapshot.executable_spread_pct_for(config.position_notional_usd)
+    cost = execution_spread_cost_usd(snapshot.spread_pct, executable_spread, config)
+    if fill < config.min_execution_fill_fraction:
+        return ExecutionSimulation(
+            passed=False,
+            status="partial",
+            reason="partial_fill_below_min",
+            fill_fraction=fill,
+            cost_usd=cost,
+        )
+    status = "partial" if fill < 1 else "full"
+    return ExecutionSimulation(True, status, "execution_ok", fill, cost)
+
+
+def fill_fraction(depth_usd: float | None, notional_usd: float) -> float:
+    if depth_usd is None:
+        return 1.0
+    if notional_usd <= 0:
+        return 0.0
+    return max(0.0, min(1.0, depth_usd / notional_usd))
+
+
+def execution_spread_cost_usd(
+    top_spread_pct: float,
+    executable_spread_pct: float,
+    config: BacktestConfig,
+) -> float:
+    lost_edge_pct = max(0.0, top_spread_pct - executable_spread_pct)
+    return lost_edge_pct / 100 * config.position_notional_usd
 
 
 def exit_reason(
@@ -284,13 +363,14 @@ def close_trade(
     )
     fees = fee_cost_usd(config, trade.tp1_done)
     slippage = slippage_cost_usd(config)
+    execution_cost = trade.execution.cost_usd
     funding_events = funding_events_crossed(
         trade.entry.timestamp,
         exit_snapshot.timestamp,
         config,
     )
     funding = funding_pnl_usd(trade.entry, funding_events, config)
-    net_pnl = gross_pnl + funding - fees - slippage
+    net_pnl = gross_pnl + funding - fees - slippage - execution_cost
     return ClosedTrade(
         base=trade.entry.base,
         pair=trade.entry.pair,
@@ -309,8 +389,10 @@ def close_trade(
         fees_usd=fees,
         slippage_usd=slippage,
         funding_pnl_usd=funding,
+        execution_cost_usd=execution_cost,
         net_pnl_usd=net_pnl,
         exit_reason=reason,
+        tp1_done=trade.tp1_done,
         entry_zscore=trade.entry_signal.features.zscore,
         entry_velocity_pct_per_minute=trade.entry_signal.features.velocity_pct_per_minute,
         entry_category=trade.entry_signal.features.category,
@@ -321,15 +403,24 @@ def close_trade(
         exit_executable_spread_pct=exit_snapshot.executable_spread_pct_for(
             config.position_notional_usd,
         ),
+        execution_status=trade.execution.status,
+        execution_reason=trade.execution.reason,
+        execution_fill_fraction=trade.execution.fill_fraction,
         funding_events=funding_events,
         seconds_to_first_funding=seconds_to_next_funding(trade.entry.timestamp, config),
         entry_net_expected_profit_usd=trade.entry_signal.net_expected_profit_usd,
     )
 
 
-def skipped_signal(signal: TradeSignal) -> SkippedSignal:
+def skipped_signal(
+    signal: TradeSignal,
+    execution: ExecutionSimulation | None = None,
+) -> SkippedSignal:
     features = signal.features
     snapshot = features.snapshot
+    reason = signal.reason
+    if signal.should_enter and execution is not None and not execution.passed:
+        reason = execution.reason
     return SkippedSignal(
         timestamp=format_time(snapshot.timestamp),
         base=snapshot.base,
@@ -338,7 +429,7 @@ def skipped_signal(signal: TradeSignal) -> SkippedSignal:
         short_exchange=snapshot.short_exchange,
         spread_pct=snapshot.spread_pct,
         min_quote_volume_24h=snapshot.min_quote_volume_24h,
-        reason=signal.reason,
+        reason=reason,
         zscore=features.zscore,
         velocity_pct_per_minute=features.velocity_pct_per_minute,
         acceleration_pct_per_minute2=features.acceleration_pct_per_minute2,
@@ -456,11 +547,17 @@ def print_report(
     print(f"skipped_signals={skipped_count}")
     print(f"win_rate={stats.win_rate_pct:.2f}%")
     print(f"net_profit_usd={stats.net_profit_usd:.4f}")
+    print(f"expectancy_usd={stats.expectancy_usd:.4f}")
+    print(f"median_pnl_usd={stats.median_pnl_usd:.4f}")
+    print(f"best_trade_usd={stats.best_trade_usd:.4f}")
+    print(f"worst_trade_usd={stats.worst_trade_usd:.4f}")
     if stats.profit_factor is None:
         print("profit_factor=inf")
     else:
         print(f"profit_factor={stats.profit_factor:.4f}")
     print(f"max_drawdown_usd={stats.max_drawdown_usd:.4f}")
+    print(f"max_consecutive_wins={stats.max_consecutive_wins}")
+    print(f"max_consecutive_losses={stats.max_consecutive_losses}")
     print(f"average_holding_seconds={stats.average_holding_seconds:.2f}")
     if trades_path:
         print(f"trades_csv={trades_path}")

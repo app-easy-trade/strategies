@@ -52,6 +52,17 @@ class SpreadSnapshot:
             return self.executable_spread_1000_pct
         return self.spread_pct
 
+    def depth_usd_for(self, side: str, notional_usd: float) -> float | None:
+        if side not in {"long", "short"}:
+            raise ValueError(f"Unknown depth side: {side}")
+        if notional_usd <= 100:
+            return self.long_depth_usd_100 if side == "long" else self.short_depth_usd_100
+        if notional_usd <= 200:
+            return self.long_depth_usd_200 if side == "long" else self.short_depth_usd_200
+        if notional_usd <= 1000:
+            return self.long_depth_usd_1000 if side == "long" else self.short_depth_usd_1000
+        return None
+
 
 @dataclass(frozen=True)
 class SpreadFeatures:
