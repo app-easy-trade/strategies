@@ -2,7 +2,8 @@
 
 `output/telegram_bot.py` отправляет spread-сигналы и контрольные отчеты в Telegram.
 
-Сейчас бот работает как CLI-процесс: команды запускаются в терминале, а бот отправляет сообщения в Telegram. Slash-команды внутри чата (`/start`, `/paper`, `/daily`) пока не реализованы.
+Для автономной работы бот должен быть запущен постоянным процессом с `--listen-commands`.
+После этого в Telegram можно нажать `/start`, `/daily`, `/paper`, `/status`, `/stop`.
 
 ## Подключение
 
@@ -84,6 +85,7 @@ python -m output.telegram_bot \
 ```bash
 python -m output.telegram_bot \
   --listen-commands \
+  --notify-startup \
   --send-on-start \
   --daily-control \
   --backtest-input data/spread_history_enriched_sane.csv \
@@ -101,6 +103,14 @@ python -m output.telegram_bot \
 - `/help` - показать команды.
 
 Список подписчиков хранится в `data/telegram_subscribers.json`.
+
+На Windows можно запустить готовым скриптом:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/start_telegram_bot.ps1
+```
+
+Логи будут писаться в `data/telegram_bot.log`. Если после запуска не пришло сообщение `Arbitration bot is running`, значит процесс не стартовал или в `.env` нет `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`.
 
 Добавить backtest report:
 

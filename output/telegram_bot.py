@@ -135,6 +135,15 @@ def get_chat_ids(token: str, timeout: float = 20.0) -> list[tuple[str, str]]:
     return sorted(chats.items(), key=lambda item: item[1])
 
 
+def delete_webhook(token: str, timeout: float = 20.0) -> None:
+    telegram_request(
+        token,
+        "deleteWebhook",
+        {"drop_pending_updates": False},
+        timeout=timeout,
+    )
+
+
 def get_updates(token: str, offset: int | None, timeout: float = 20.0) -> list[dict[str, Any]]:
     payload: dict[str, Any] = {"timeout": int(timeout)}
     if offset is not None:
@@ -403,6 +412,10 @@ def run_once(args: argparse.Namespace, token: str | None, chat_id: str | None) -
 
 def run_command_listener(args: argparse.Namespace, token: str) -> None:
     subscribers = load_subscribers(args.subscribers_file)
+    if args.chat_id:
+        subscribers.add(str(args.chat_id))
+    delete_webhook(token, timeout=args.telegram_timeout)
+    save_subscribers(args.subscribers_file, subscribers)
     offset: int | None = None
     last_auto_report = datetime.now().timestamp()
     print(
@@ -410,6 +423,13 @@ def run_command_listener(args: argparse.Namespace, token: str) -> None:
         f"subscribers={len(subscribers)}, poll={args.command_poll_interval}s, "
         f"auto_report={args.auto_report_interval}s"
     )
+    if args.notify_startup and args.chat_id:
+        send_message(
+            token,
+            str(args.chat_id),
+            "Arbitration bot is running. Send /daily or /paper.",
+            timeout=args.telegram_timeout,
+        )
 
     while True:
         try:
@@ -578,6 +598,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--command-poll-interval", type=int, default=3)
     parser.add_argument("--auto-report-interval", type=int, default=86_400)
     parser.add_argument("--send-on-start", action="store_true", help="Send the first report immediately after /start.")
+    parser.add_argument("--notify-startup", action="store_true", help="Send a startup message to TELEGRAM_CHAT_ID/chat-id.")
     return parser
 
 
@@ -602,6 +623,7 @@ def main() -> None:
     if args.listen_commands:
         if not token:
             raise TelegramBotError("TELEGRAM_BOT_TOKEN is not set")
+        args.chat_id = chat_id
         args.daily_control = True
         run_command_listener(args, token)
         return

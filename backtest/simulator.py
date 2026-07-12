@@ -23,6 +23,8 @@ load_config = load_strategy_config
 class OpenTrade:
     entry_signal: TradeSignal
     execution: ExecutionSimulation
+    margin: PortfolioRiskSimulation
+    account_equity_before_usd: float
     remaining_fraction: float = 1.0
     realized_pnl_usd: float = 0.0
     tp1_done: bool = False
@@ -69,6 +71,12 @@ class ClosedTrade:
     funding_events: int
     seconds_to_first_funding: float | None
     entry_net_expected_profit_usd: float
+    entry_margin_required_usd: float
+    entry_adverse_buffer_usd: float
+    entry_total_reserved_usd: float
+    entry_margin_usage_pct: float
+    account_equity_before_usd: float
+    account_equity_after_usd: float
 
 
 @dataclass(frozen=True)
@@ -98,6 +106,26 @@ class ExecutionSimulation:
     reason: str
     fill_fraction: float
     cost_usd: float
+
+
+@dataclass(frozen=True)
+class PortfolioRiskSimulation:
+    passed: bool
+    reason: str
+    margin_required_usd: float
+    adverse_buffer_usd: float
+    total_reserved_usd: float
+    projected_reserved_usd: float
+    projected_margin_usage_pct: float
+    projected_total_notional_usd: float
+
+
+@dataclass
+class AccountState:
+    equity_usd: float
+    reserved_margin_usd: float = 0.0
+    open_notional_usd: float = 0.0
+    open_trades: int = 0
 
 
 def read_snapshots(path: Path) -> list[SpreadSnapshot]:
@@ -148,6 +176,7 @@ def run_backtest(
     config: BacktestConfig,
 ) -> tuple[list[ClosedTrade], BacktestStats, list[SkippedSignal]]:
     feature_engine = SpreadFeatureEngine(config)
+    account = AccountState(equity_usd=config.available_margin_usd)
     open_trades: dict[tuple[str, str, str, str, str], OpenTrade] = {}
     last_snapshot_by_key: dict[tuple[str, str, str, str, str], SpreadSnapshot] = {}
     closed: list[ClosedTrade] = []
@@ -160,15 +189,19 @@ def run_backtest(
         if trade is None:
             signal = evaluate_signal(features, config)
             execution = simulate_entry_execution(snapshot, config)
-            if signal.should_enter and execution.passed:
+            portfolio_risk = simulate_portfolio_risk(account, config)
+            if signal.should_enter and execution.passed and portfolio_risk.passed:
+                reserve_margin(account, portfolio_risk, config)
                 open_trades[snapshot.key] = OpenTrade(
                     entry_signal=signal,
                     execution=execution,
+                    margin=portfolio_risk,
+                    account_equity_before_usd=account.equity_usd,
                     max_spread_pct=snapshot.spread_pct,
                     min_spread_pct=snapshot.spread_pct,
                 )
             else:
-                skipped.append(skipped_signal(signal, execution))
+                skipped.append(skipped_signal(signal, execution, portfolio_risk))
             continue
 
         trade.max_spread_pct = max(trade.max_spread_pct, snapshot.spread_pct)
@@ -185,12 +218,12 @@ def run_backtest(
 
         reason = exit_reason(trade, snapshot, config)
         if reason:
-            closed.append(close_trade(trade, snapshot, config, reason))
+            closed.append(close_trade_and_release(trade, snapshot, config, account, reason))
             del open_trades[snapshot.key]
 
     for trade in open_trades.values():
         exit_snapshot = last_snapshot_by_key.get(trade.entry.key, trade.entry)
-        closed.append(close_trade(trade, exit_snapshot, config, "end_of_data"))
+        closed.append(close_trade_and_release(trade, exit_snapshot, config, account, "end_of_data"))
 
     stats = calculate_stats(
         [trade.net_pnl_usd for trade in closed],
@@ -290,6 +323,91 @@ def entry_spread_guard(
     return None
 
 
+def simulate_portfolio_risk(
+    account: AccountState,
+    config: BacktestConfig,
+) -> PortfolioRiskSimulation:
+    if config.leverage <= 0:
+        return portfolio_decision(False, "invalid_leverage", 0.0, 0.0, account, config)
+    if account.equity_usd < config.min_account_equity_usd:
+        return portfolio_decision(False, "account_equity_below_min", 0.0, 0.0, account, config)
+
+    margin_required = 2 * config.position_notional_usd / config.leverage
+    adverse_buffer = config.position_notional_usd * config.required_adverse_buffer_pct / 100
+    decision = portfolio_decision(True, "portfolio_risk_ok", margin_required, adverse_buffer, account, config)
+
+    if config.max_open_trades > 0 and account.open_trades >= config.max_open_trades:
+        return PortfolioRiskSimulation(**{**decision.__dict__, "passed": False, "reason": "max_open_trades_reached"})
+    if (
+        config.max_total_position_notional_usd > 0
+        and decision.projected_total_notional_usd > config.max_total_position_notional_usd
+    ):
+        return PortfolioRiskSimulation(**{**decision.__dict__, "passed": False, "reason": "max_total_position_notional"})
+    if decision.projected_reserved_usd > account.equity_usd:
+        return PortfolioRiskSimulation(**{**decision.__dict__, "passed": False, "reason": "portfolio_margin_insufficient"})
+    if decision.projected_margin_usage_pct > config.max_margin_usage_pct:
+        return PortfolioRiskSimulation(**{**decision.__dict__, "passed": False, "reason": "portfolio_margin_usage_above_limit"})
+    return decision
+
+
+def portfolio_decision(
+    passed: bool,
+    reason: str,
+    margin_required: float,
+    adverse_buffer: float,
+    account: AccountState,
+    config: BacktestConfig,
+) -> PortfolioRiskSimulation:
+    total_reserved = margin_required + adverse_buffer
+    projected_reserved = account.reserved_margin_usd + total_reserved
+    projected_usage = (
+        projected_reserved / account.equity_usd * 100
+        if account.equity_usd > 0
+        else 999.0
+    )
+    projected_notional = account.open_notional_usd + 2 * config.position_notional_usd
+    return PortfolioRiskSimulation(
+        passed=passed,
+        reason=reason,
+        margin_required_usd=margin_required,
+        adverse_buffer_usd=adverse_buffer,
+        total_reserved_usd=total_reserved,
+        projected_reserved_usd=projected_reserved,
+        projected_margin_usage_pct=projected_usage,
+        projected_total_notional_usd=projected_notional,
+    )
+
+
+def reserve_margin(
+    account: AccountState,
+    risk: PortfolioRiskSimulation,
+    config: BacktestConfig,
+) -> None:
+    account.reserved_margin_usd += risk.total_reserved_usd
+    account.open_notional_usd += 2 * config.position_notional_usd
+    account.open_trades += 1
+
+
+def close_trade_and_release(
+    trade: OpenTrade,
+    exit_snapshot: SpreadSnapshot,
+    config: BacktestConfig,
+    account: AccountState,
+    reason: str,
+) -> ClosedTrade:
+    closed = close_trade(trade, exit_snapshot, config, reason, trade.account_equity_before_usd)
+    account.reserved_margin_usd = max(0.0, account.reserved_margin_usd - trade.margin.total_reserved_usd)
+    account.open_notional_usd = max(0.0, account.open_notional_usd - 2 * config.position_notional_usd)
+    account.open_trades = max(0, account.open_trades - 1)
+    account.equity_usd += closed.net_pnl_usd
+    return ClosedTrade(
+        **{
+            **closed.__dict__,
+            "account_equity_after_usd": account.equity_usd,
+        }
+    )
+
+
 def fill_fraction(depth_usd: float | None, notional_usd: float) -> float:
     if depth_usd is None:
         return 1.0
@@ -386,6 +504,7 @@ def close_trade(
     exit_snapshot: SpreadSnapshot,
     config: BacktestConfig,
     reason: str,
+    account_equity_before_usd: float,
 ) -> ClosedTrade:
     remaining_pnl = trade_pnl_usd(
         trade.entry,
@@ -446,18 +565,27 @@ def close_trade(
         funding_events=funding_events,
         seconds_to_first_funding=seconds_to_next_funding(trade.entry.timestamp, config),
         entry_net_expected_profit_usd=trade.entry_signal.net_expected_profit_usd,
+        entry_margin_required_usd=trade.margin.margin_required_usd,
+        entry_adverse_buffer_usd=trade.margin.adverse_buffer_usd,
+        entry_total_reserved_usd=trade.margin.total_reserved_usd,
+        entry_margin_usage_pct=trade.margin.projected_margin_usage_pct,
+        account_equity_before_usd=account_equity_before_usd,
+        account_equity_after_usd=account_equity_before_usd + net_pnl,
     )
 
 
 def skipped_signal(
     signal: TradeSignal,
     execution: ExecutionSimulation | None = None,
+    portfolio_risk: PortfolioRiskSimulation | None = None,
 ) -> SkippedSignal:
     features = signal.features
     snapshot = features.snapshot
     reason = signal.reason
     if signal.should_enter and execution is not None and not execution.passed:
         reason = execution.reason
+    if signal.should_enter and execution is not None and execution.passed and portfolio_risk is not None and not portfolio_risk.passed:
+        reason = portfolio_risk.reason
     return SkippedSignal(
         timestamp=format_time(snapshot.timestamp),
         base=snapshot.base,

@@ -14,6 +14,9 @@ position_notional_usd: 200
 leverage: 5
 available_margin_usd: 200
 max_margin_usage_pct: 70
+max_open_trades: 5
+max_total_position_notional_usd: 1000
+min_account_equity_usd: 50
 required_adverse_buffer_pct: 5
 maker_fee_pct: 0.02
 taker_fee_pct: 0.055

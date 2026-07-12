@@ -11,6 +11,8 @@ Ready:
 - execution-aware history collection with order book depth;
 - backtest with fees, slippage, funding events, TP1, dynamic exit, stop and max holding;
 - executable spread guard before entry;
+- portfolio margin model in backtest: reserved margin, adverse buffer,
+  total account usage, max open trades and max total notional;
 - detailed trade statistics and skipped-signal reasons;
 - paper trading loop without real orders;
 - Telegram daily reports and autonomous command listener;
@@ -30,7 +32,7 @@ The next safe step is read-only/testnet integration:
 
 Real trading should not be enabled until these are implemented and tested:
 
-- authenticated read-only account checks;
+- authenticated read-only account checks for live balances, margin and positions;
 - real/testnet order executor;
 - order id tracking;
 - partial fill handling;

@@ -5,13 +5,14 @@ from .models import RiskDecision, SpreadFeatures
 
 
 def evaluate_risk(features: SpreadFeatures, config: StrategyConfig) -> RiskDecision:
+    if config.leverage <= 0:
+        return decision(False, "invalid_leverage", 0.0, 999.0, 0.0)
+
     margin_required = 2 * config.position_notional_usd / config.leverage
     adverse_buffer = config.position_notional_usd * config.required_adverse_buffer_pct / 100
     total_required = margin_required + adverse_buffer
     usage_pct = total_required / config.available_margin_usd * 100 if config.available_margin_usd > 0 else 999.0
 
-    if config.leverage <= 0:
-        return decision(False, "invalid_leverage", margin_required, usage_pct, adverse_buffer)
     if total_required > config.available_margin_usd:
         return decision(False, "insufficient_margin_buffer", margin_required, usage_pct, adverse_buffer)
     if usage_pct > config.max_margin_usage_pct:

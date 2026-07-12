@@ -19,6 +19,9 @@ class BacktestReport:
     total_funding_pnl_usd: float
     tp1_count: int
     average_execution_fill_fraction: float
+    average_entry_margin_usage_pct: float
+    max_entry_margin_usage_pct: float
+    final_account_equity_usd: float
     top_exit_reasons: list[tuple[str, int]]
     top_skip_reasons: list[tuple[str, int]]
     pnl_by_exit_reason: list[tuple[str, float]]
@@ -50,6 +53,8 @@ def build_report(trades_csv: Path, skipped_csv: Path | None = None) -> BacktestR
     total_funding = sum(float(row.get("funding_pnl_usd") or 0) for row in trades)
     tp1_count = sum(1 for row in trades if truthy(row.get("tp1_done")))
     fill_fractions = [float(row.get("execution_fill_fraction") or 1) for row in trades]
+    margin_usages = [float(row.get("entry_margin_usage_pct") or 0) for row in trades]
+    final_equity = float(trades[-1].get("account_equity_after_usd") or 0) if trades else 0.0
 
     pnl_by_pair: defaultdict[str, float] = defaultdict(float)
     pnl_by_base: defaultdict[str, float] = defaultdict(float)
@@ -82,6 +87,11 @@ def build_report(trades_csv: Path, skipped_csv: Path | None = None) -> BacktestR
         average_execution_fill_fraction=(
             sum(fill_fractions) / len(fill_fractions)
         ) if fill_fractions else 0.0,
+        average_entry_margin_usage_pct=(
+            sum(margin_usages) / len(margin_usages)
+        ) if margin_usages else 0.0,
+        max_entry_margin_usage_pct=max(margin_usages) if margin_usages else 0.0,
+        final_account_equity_usd=final_equity,
         top_exit_reasons=exit_reasons.most_common(5),
         top_skip_reasons=skip_reasons.most_common(5),
         pnl_by_exit_reason=sorted(
@@ -124,6 +134,8 @@ def format_report(report: BacktestReport) -> str:
         f"execution={report.total_execution_cost_usd:.4f}",
         f"Funding PnL: {report.total_funding_pnl_usd:.4f} USD | TP1 trades: {report.tp1_count}",
         f"Avg execution fill: {report.average_execution_fill_fraction:.2%}",
+        f"Margin usage avg/max: {report.average_entry_margin_usage_pct:.2f}%/{report.max_entry_margin_usage_pct:.2f}%",
+        f"Final account equity: {report.final_account_equity_usd:.4f} USD",
     ]
     if report.top_exit_reasons:
         lines.append("")

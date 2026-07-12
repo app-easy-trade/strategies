@@ -201,6 +201,42 @@ class BacktestSimulatorTest(unittest.TestCase):
         self.assertFalse(signal.should_enter)
         self.assertEqual("insufficient_margin_buffer", signal.reason)
 
+    def test_risk_engine_rejects_invalid_leverage(self) -> None:
+        config = BacktestConfig(leverage=0, min_zscore=0)
+        features = SpreadFeatureEngine(config).update(
+            make_snapshot("2026-01-01T00:00:00+00:00", 3.0)
+        )
+
+        decision = evaluate_risk(features, config)
+
+        self.assertFalse(decision.passed)
+        self.assertEqual("invalid_leverage", decision.reason)
+
+    def test_backtest_rejects_portfolio_margin_overuse(self) -> None:
+        snapshots = [
+            make_snapshot_for_base("SOL", "2026-01-01T00:00:00+00:00", 3.0),
+            make_snapshot_for_base("ETH", "2026-01-01T00:00:00+00:00", 3.0),
+            make_snapshot_for_base("SOL", "2026-01-01T00:05:00+00:00", 0.4),
+        ]
+
+        trades, _, skipped = run_backtest(
+            snapshots,
+            BacktestConfig(
+                min_zscore=0,
+                available_margin_usd=100,
+                position_notional_usd=200,
+                leverage=5,
+                max_margin_usage_pct=90,
+                max_open_trades=5,
+                max_total_position_notional_usd=1000,
+            ),
+        )
+
+        self.assertEqual(1, len(trades))
+        self.assertEqual("portfolio_margin_insufficient", skipped[0].reason)
+        self.assertGreater(trades[0].entry_margin_required_usd, 0)
+        self.assertGreater(trades[0].account_equity_after_usd, 0)
+
     def test_funding_engine_marks_favorable_edge(self) -> None:
         config = BacktestConfig(position_notional_usd=200)
         snapshot = make_snapshot(
@@ -331,6 +367,18 @@ def make_snapshot(
         min_quote_volume_24h=1_000_000.0,
         long_funding_rate=long_funding_rate,
         short_funding_rate=short_funding_rate,
+    )
+
+
+def make_snapshot_for_base(base: str, timestamp: str, spread_pct: float) -> SpreadSnapshot:
+    snapshot = make_snapshot(timestamp, spread_pct)
+    return SpreadSnapshot(
+        **{
+            **snapshot.__dict__,
+            "base": base,
+            "long_symbol": f"{base}USDT",
+            "short_symbol": f"{base}_USDT",
+        }
     )
 
 

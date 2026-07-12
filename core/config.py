@@ -21,6 +21,9 @@ class StrategyConfig:
     leverage: float = 5.0
     available_margin_usd: float = 200.0
     max_margin_usage_pct: float = 70.0
+    max_open_trades: int = 5
+    max_total_position_notional_usd: float = 1_000.0
+    min_account_equity_usd: float = 50.0
     required_adverse_buffer_pct: float = 5.0
     maker_fee_pct: float = 0.02
     taker_fee_pct: float = 0.055
