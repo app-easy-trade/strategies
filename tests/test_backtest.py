@@ -159,6 +159,29 @@ class BacktestSimulatorTest(unittest.TestCase):
         self.assertEqual([], trades)
         self.assertEqual("one_leg_unfilled", skipped[0].reason)
 
+    def test_execution_simulator_skips_deteriorated_entry_spread(self) -> None:
+        snapshot = make_snapshot("2026-01-01T00:00:00+00:00", 3.0)
+        snapshot = SpreadSnapshot(
+            **{
+                **snapshot.__dict__,
+                "executable_spread_200_pct": 1.9,
+                "long_depth_usd_200": 200.0,
+                "short_depth_usd_200": 200.0,
+            }
+        )
+
+        trades, _, skipped = run_backtest(
+            [snapshot],
+            BacktestConfig(
+                min_zscore=0,
+                position_notional_usd=200,
+                max_entry_spread_deterioration_pct=0.5,
+            ),
+        )
+
+        self.assertEqual([], trades)
+        self.assertEqual("entry_spread_deteriorated", skipped[0].reason)
+
     def test_risk_engine_rejects_insufficient_margin_buffer(self) -> None:
         config = BacktestConfig(
             position_notional_usd=200,

@@ -18,6 +18,8 @@ It accounts for:
 - execution simulation with depth-aware full/partial/failed fills when depth
   columns are available;
 - one-leg failure detection when one side has no executable depth;
+- entry spread guard: skip the trade if executable spread is too low or if the
+  spread deteriorated too much before entry;
 - stop by maximum adverse spread expansion;
 - maximum holding time as an emergency limit;
 - maker/taker fees;
@@ -116,6 +118,13 @@ The trade CSV includes:
 - `execution_cost_usd`;
 - `funding_events`;
 - `seconds_to_first_funding`.
+
+Important entry execution settings in `config/backtest.yaml`:
+
+- `min_entry_executable_spread_pct`: minimum spread that must still be
+  executable after checking the book;
+- `max_entry_spread_deterioration_pct`: maximum allowed loss between signal
+  spread and executable spread.
 
 The report includes:
 

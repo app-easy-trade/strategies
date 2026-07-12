@@ -221,6 +221,9 @@ def simulate_entry_execution(
     short_depth = snapshot.depth_usd_for("short", config.position_notional_usd)
     if long_depth is None and short_depth is None:
         executable_spread = snapshot.executable_spread_pct_for(config.position_notional_usd)
+        spread_guard = entry_spread_guard(snapshot.spread_pct, executable_spread, config)
+        if spread_guard is not None:
+            return spread_guard
         return ExecutionSimulation(
             passed=True,
             status="full",
@@ -243,6 +246,9 @@ def simulate_entry_execution(
     fill = min(long_fill, short_fill)
     executable_spread = snapshot.executable_spread_pct_for(config.position_notional_usd)
     cost = execution_spread_cost_usd(snapshot.spread_pct, executable_spread, config)
+    spread_guard = entry_spread_guard(snapshot.spread_pct, executable_spread, config, cost)
+    if spread_guard is not None:
+        return spread_guard
     if fill < config.min_execution_fill_fraction:
         return ExecutionSimulation(
             passed=False,
@@ -253,6 +259,35 @@ def simulate_entry_execution(
         )
     status = "partial" if fill < 1 else "full"
     return ExecutionSimulation(True, status, "execution_ok", fill, cost)
+
+
+def entry_spread_guard(
+    signal_spread_pct: float,
+    executable_spread_pct: float,
+    config: BacktestConfig,
+    cost_usd: float | None = None,
+) -> ExecutionSimulation | None:
+    cost = execution_spread_cost_usd(signal_spread_pct, executable_spread_pct, config)
+    if cost_usd is not None:
+        cost = cost_usd
+    if executable_spread_pct < config.min_entry_executable_spread_pct:
+        return ExecutionSimulation(
+            passed=False,
+            status="failed",
+            reason="entry_executable_spread_below_min",
+            fill_fraction=0.0,
+            cost_usd=cost,
+        )
+    deterioration = signal_spread_pct - executable_spread_pct
+    if deterioration > config.max_entry_spread_deterioration_pct:
+        return ExecutionSimulation(
+            passed=False,
+            status="failed",
+            reason="entry_spread_deteriorated",
+            fill_fraction=0.0,
+            cost_usd=cost,
+        )
+    return None
 
 
 def fill_fraction(depth_usd: float | None, notional_usd: float) -> float:

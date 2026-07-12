@@ -31,6 +31,8 @@ class StrategyConfig:
     execution_simulation_enabled: bool = True
     min_execution_fill_fraction: float = 0.95
     one_leg_failure_penalty_pct: float = 0.15
+    min_entry_executable_spread_pct: float = 1.0
+    max_entry_spread_deterioration_pct: float = 0.5
     tp1_close_fraction: float = 0.5
     tp1_retrace_fraction: float = 0.5
     final_exit_spread_pct: float = 0.5

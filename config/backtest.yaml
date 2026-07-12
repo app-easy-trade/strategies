@@ -24,6 +24,8 @@ one_leg_timeout_seconds: 5
 execution_simulation_enabled: true
 min_execution_fill_fraction: 0.95
 one_leg_failure_penalty_pct: 0.15
+min_entry_executable_spread_pct: 1.0
+max_entry_spread_deterioration_pct: 0.5
 tp1_close_fraction: 0.5
 tp1_retrace_fraction: 0.5
 final_exit_spread_pct: 0.5
