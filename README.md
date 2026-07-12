@@ -60,13 +60,21 @@ TELEGRAM_BOT_TOKEN=YOUR_TOKEN
 TELEGRAM_CHAT_ID=YOUR_CHAT_ID
 ```
 
-Автономный запуск:
+Самый простой запуск на Windows: открой файл двойным кликом:
+
+```text
+scripts/start_telegram_bot.bat
+```
+
+Или вставь команду в PowerShell/Terminal из папки проекта:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/start_telegram_bot.ps1
 ```
 
-После запуска бот должен сам прислать `Arbitration bot is running`. Затем в Telegram доступны команды:
+После запуска должно открыться окно PowerShell. Его нужно оставить открытым.
+Бот должен сам прислать в Telegram: `Arbitration bot is running`.
+Затем доступны команды:
 
 ```text
 /start  - подписаться и включить автономные отчеты
@@ -79,6 +87,20 @@ powershell -ExecutionPolicy Bypass -File scripts/start_telegram_bot.ps1
 
 Логи: `data/telegram_bot.log`.
 
+Проверка Telegram без запуска постоянного процесса:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/check_telegram_bot.ps1
+```
+
+Если бот не отвечает, почти всегда причина одна из этих:
+
+- процесс не запущен;
+- команда запущена не из папки проекта;
+- в `.env` нет `TELEGRAM_BOT_TOKEN`;
+- в `.env` нет правильного `TELEGRAM_CHAT_ID`;
+- у бота был webhook, который мешал polling. Скрипт запуска теперь сам делает `deleteWebhook`.
+
 ## Paper trading
 
 ```bash
@@ -86,6 +108,30 @@ python -m paper.paper_trader --db data/paper_trading.sqlite3 --interval 60 --top
 ```
 
 При открытии/закрытии виртуальной сделки Telegram получает base, биржи, LONG/SHORT ноги, spread, размер позиции, funding, expected net, PnL и TradingView формулу.
+
+## Read-only account checks
+
+Перед реальной торговлей нужны проверки баланса, маржи и позиций. Сейчас реализован безопасный read-only слой для Bybit и Binance.
+
+Добавь в `.env` только read-only ключи без прав trade/withdraw:
+
+```bash
+BYBIT_API_KEY=...
+BYBIT_API_SECRET=...
+BYBIT_TESTNET=false
+
+BINANCE_API_KEY=...
+BINANCE_API_SECRET=...
+BINANCE_TESTNET=false
+```
+
+Проверка вручную:
+
+```bash
+python -m brokers.account_check --exchanges bybit,binance
+```
+
+В Telegram daily report эти проверки включены в `scripts/start_telegram_bot.ps1` через `--account-checks`.
 
 ## Funding
 

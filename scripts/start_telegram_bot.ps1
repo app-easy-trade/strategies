@@ -8,6 +8,12 @@ if (-not (Test-Path ".env")) {
 }
 
 New-Item -ItemType Directory -Force -Path "data" | Out-Null
+Start-Transcript -Path "data/telegram_bot.log" -Append | Out-Null
+
+Write-Host "Starting Arbitration Telegram bot..."
+Write-Host "Project: $(Get-Location)"
+Write-Host "Log: data/telegram_bot.log"
+Write-Host "Keep this window open. Press Ctrl+C to stop."
 
 python -m output.telegram_bot `
     --listen-commands `
@@ -16,5 +22,5 @@ python -m output.telegram_bot `
     --daily-control `
     --backtest-input data/spread_history_enriched_sane.csv `
     --paper-db data/paper_trading.sqlite3 `
-    --auto-report-interval 86400 `
-    *> data/telegram_bot.log
+    --account-checks `
+    --auto-report-interval 86400

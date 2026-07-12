@@ -17,6 +17,8 @@ Ready:
 - paper trading loop without real orders;
 - Telegram daily reports and autonomous command listener;
 - Telegram notifications for paper trade open/close.
+- read-only account checks for Bybit and Binance balances, margin and
+  positions.
 
 ## Allowed next step
 
@@ -24,7 +26,7 @@ The next safe step is read-only/testnet integration:
 
 1. Keep collecting enriched history.
 2. Run paper trading with Telegram notifications.
-3. Add authenticated read-only checks for balances, margin and positions.
+3. Run authenticated read-only checks for balances, margin and positions.
 4. Add exchange testnet/demo order executor.
 5. Test one-leg failure handling on testnet.
 
@@ -32,7 +34,7 @@ The next safe step is read-only/testnet integration:
 
 Real trading should not be enabled until these are implemented and tested:
 
-- authenticated read-only account checks for live balances, margin and positions;
+- read-only account checks for every target exchange, not only Bybit/Binance;
 - real/testnet order executor;
 - order id tracking;
 - partial fill handling;

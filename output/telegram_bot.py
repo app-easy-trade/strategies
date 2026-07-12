@@ -18,6 +18,7 @@ from backtest.simulator import (
     write_skipped_signals,
     write_trades,
 )
+from brokers.account_check import check_accounts, format_account_report, parse_exchanges
 from src.connection_check import check_exchange
 from src.spread_monitor import filter_rows
 from src.spread_scanner import (
@@ -133,6 +134,18 @@ def get_chat_ids(token: str, timeout: float = 20.0) -> list[tuple[str, str]]:
         title = chat.get("title") or chat.get("username") or chat.get("first_name") or "chat"
         chats[chat_id] = str(title)
     return sorted(chats.items(), key=lambda item: item[1])
+
+
+def get_bot_info(token: str, timeout: float = 20.0) -> dict[str, Any]:
+    data = telegram_request(token, "getMe", timeout=timeout)
+    result = data.get("result")
+    return result if isinstance(result, dict) else {}
+
+
+def get_webhook_info(token: str, timeout: float = 20.0) -> dict[str, Any]:
+    data = telegram_request(token, "getWebhookInfo", timeout=timeout)
+    result = data.get("result")
+    return result if isinstance(result, dict) else {}
 
 
 def delete_webhook(token: str, timeout: float = 20.0) -> None:
@@ -276,6 +289,9 @@ def build_daily_control_text(args: argparse.Namespace, rows: list[SpreadRow]) ->
     if args.paper_db:
         lines.extend(["", build_paper_trades_text(Path(args.paper_db), args.paper_limit)])
 
+    if getattr(args, "account_checks", False):
+        lines.extend(["", build_account_checks_text(args)])
+
     lines.extend(
         [
             "",
@@ -285,6 +301,11 @@ def build_daily_control_text(args: argparse.Namespace, rows: list[SpreadRow]) ->
         ]
     )
     return "\n".join(lines)
+
+
+def build_account_checks_text(args: argparse.Namespace) -> str:
+    results = check_accounts(parse_exchanges(args.account_exchanges), args.timeout)
+    return format_account_report(results)
 
 
 def build_backtest_text(args: argparse.Namespace) -> str | None:
@@ -535,6 +556,26 @@ def command_help_text(started: bool = False) -> str:
     )
 
 
+def run_telegram_health_check(args: argparse.Namespace, token: str) -> None:
+    info = get_bot_info(token, timeout=args.telegram_timeout)
+    webhook = get_webhook_info(token, timeout=args.telegram_timeout)
+    print("Telegram health check")
+    print(f"bot_username={info.get('username') or 'unknown'}")
+    print(f"bot_id={info.get('id') or 'unknown'}")
+    print(f"webhook_url={webhook.get('url') or 'empty'}")
+    print(f"pending_update_count={webhook.get('pending_update_count')}")
+    if args.chat_id:
+        send_message(
+            token,
+            str(args.chat_id),
+            "Telegram health check OK. Bot can send messages to this chat.",
+            timeout=args.telegram_timeout,
+        )
+        print("test_message=sent")
+    else:
+        print("test_message=skipped_no_chat_id")
+
+
 def split_message(text: str) -> list[str]:
     if len(text) <= MAX_TELEGRAM_MESSAGE_LEN:
         return [text]
@@ -587,12 +628,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--backtest-skipped", default=None, help="Optional skipped signals CSV for daily report.")
     parser.add_argument("--paper-db", default=None, help="Optional paper trading SQLite DB for open trade report.")
     parser.add_argument("--paper-limit", type=int, default=10, help="Max open paper trades in daily report.")
+    parser.add_argument("--account-checks", action="store_true", help="Add read-only balance/margin/position checks.")
+    parser.add_argument("--account-exchanges", default="bybit,binance")
     parser.add_argument("--env", type=Path, default=Path(".env"))
     parser.add_argument("--bot-token", default=None)
     parser.add_argument("--chat-id", default=None)
     parser.add_argument("--once", action="store_true", help="Send one Telegram alert/report and exit.")
     parser.add_argument("--dry-run", action="store_true", help="Print message without sending it.")
     parser.add_argument("--get-chat-id", action="store_true", help="Print chat IDs from recent bot updates.")
+    parser.add_argument("--check-telegram", action="store_true", help="Validate Telegram token/webhook/chat delivery.")
     parser.add_argument("--listen-commands", action="store_true", help="Listen for /start, /daily, /paper, /stop commands.")
     parser.add_argument("--subscribers-file", type=Path, default=Path("data/telegram_subscribers.json"))
     parser.add_argument("--command-poll-interval", type=int, default=3)
@@ -618,6 +662,13 @@ def main() -> None:
             return
         for found_chat_id, title in chats:
             print(f"{found_chat_id} {title}")
+        return
+
+    if args.check_telegram:
+        if not token:
+            raise TelegramBotError("TELEGRAM_BOT_TOKEN is not set")
+        args.chat_id = chat_id
+        run_telegram_health_check(args, token)
         return
 
     if args.listen_commands:

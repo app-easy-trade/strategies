@@ -106,11 +106,25 @@ python -m output.telegram_bot \
 
 На Windows можно запустить готовым скриптом:
 
+Двойной клик:
+
+```text
+scripts/start_telegram_bot.bat
+```
+
+Или из PowerShell в папке проекта:
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/start_telegram_bot.ps1
 ```
 
 Логи будут писаться в `data/telegram_bot.log`. Если после запуска не пришло сообщение `Arbitration bot is running`, значит процесс не стартовал или в `.env` нет `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`.
+
+Проверить Telegram отдельно:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/check_telegram_bot.ps1
+```
 
 Добавить backtest report:
 

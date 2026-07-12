@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import json
+import hmac
+import hashlib
 from time import perf_counter
 from typing import Any, Iterable, Mapping, Sequence
 from urllib.error import HTTPError, URLError
@@ -154,6 +156,20 @@ def http_post_json(
     if not isinstance(data, dict) and not isinstance(data, list):
         raise ExchangeAPIError(f"POST {url} returned unsupported JSON payload")
     return data, latency_ms
+
+
+def hmac_sha256(secret: str, payload: str) -> str:
+    return hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def http_get_signed_json_any(
+    base_url: str,
+    path: str,
+    params: Mapping[str, Any] | None,
+    headers: Mapping[str, str],
+    timeout: float = 10.0,
+) -> tuple[JsonPayload, float]:
+    return http_get_json_any(base_url, path, params=params, timeout=timeout, headers=headers)
 
 
 def ensure(condition: bool, message: str, payload: Any | None = None) -> None:

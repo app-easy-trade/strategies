@@ -15,6 +15,8 @@ from backtest.simulator import (
     read_snapshots,
     run_backtest,
 )
+from brokers.account import AccountSnapshot, PositionSnapshot
+from brokers.account_check import format_account_report
 from backtest.optimizer import optimize
 from core.funding_engine import estimate_funding
 from core.risk_engine import evaluate_risk
@@ -319,12 +321,49 @@ class BacktestSimulatorTest(unittest.TestCase):
             backtest_skipped=None,
             paper_db=None,
             paper_limit=5,
+            account_checks=False,
+            account_exchanges="bybit,binance",
         )
 
         text = build_daily_control_text(args, [])
 
         self.assertIn("Daily Control", text)
         self.assertIn("real orders: disabled", text)
+
+    def test_account_report_formats_balance_margin_and_positions(self) -> None:
+        snapshot = AccountSnapshot(
+            exchange="bybit",
+            account_type="UNIFIED",
+            equity_usd=1000.0,
+            available_balance_usd=700.0,
+            wallet_balance_usd=900.0,
+            margin_balance_usd=1000.0,
+            initial_margin_usd=120.0,
+            maintenance_margin_usd=30.0,
+            unrealized_pnl_usd=12.5,
+            margin_usage_pct=12.0,
+            positions=[
+                PositionSnapshot(
+                    exchange="bybit",
+                    symbol="BTCUSDT",
+                    side="Buy",
+                    size=0.01,
+                    entry_price=100000.0,
+                    mark_price=100500.0,
+                    notional_usd=1005.0,
+                    leverage=5.0,
+                    unrealized_pnl_usd=5.0,
+                    liquidation_price=80000.0,
+                )
+            ],
+        )
+
+        text = format_account_report([("bybit", snapshot, None), ("binance", None, "missing API key/secret")])
+
+        self.assertIn("equity=1000.00", text)
+        self.assertIn("margin_usage=12.00%", text)
+        self.assertIn("BTCUSDT Buy", text)
+        self.assertIn("binance: SKIP/FAIL", text)
 
     def test_sqlite_store_persists_open_paper_trade(self) -> None:
         config = BacktestConfig(min_zscore=0)
