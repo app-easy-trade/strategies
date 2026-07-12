@@ -408,7 +408,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--quote", default="USDT")
     parser.add_argument("--top", type=int, default=DEFAULT_TOP)
     parser.add_argument("--limit", type=int, default=25)
-    parser.add_argument("--min-spread", type=float, default=0.5)
+    parser.add_argument("--min-spread", type=float, default=3.0)
     parser.add_argument("--max-spread", type=float, default=10.0)
     parser.add_argument("--min-volume", type=float, default=400_000)
     parser.add_argument("--require-funding-favorable", action="store_true")

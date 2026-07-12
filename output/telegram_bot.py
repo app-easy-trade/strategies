@@ -606,7 +606,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--top", type=int, default=DEFAULT_TOP)
     parser.add_argument("--interval", type=int, default=300, help="Seconds between Telegram alerts.")
     parser.add_argument("--limit", type=int, default=10, help="Max tickers per Telegram message.")
-    parser.add_argument("--min-spread", type=float, default=0.5)
+    parser.add_argument("--min-spread", type=float, default=3.0)
     parser.add_argument("--max-spread", type=float, default=5.0)
     parser.add_argument("--min-volume", type=float, default=1_000_000)
     parser.add_argument("--require-funding-favorable", action="store_true")

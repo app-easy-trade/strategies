@@ -158,6 +158,53 @@ def http_post_json(
     return data, latency_ms
 
 
+def http_request_json_any(
+    method: str,
+    base_url: str,
+    path: str,
+    params: Mapping[str, Any] | None = None,
+    body: bytes | None = None,
+    headers: Mapping[str, str] | None = None,
+    timeout: float = 10.0,
+) -> tuple[JsonPayload, float]:
+    query = urlencode(
+        {key: value for key, value in (params or {}).items() if value is not None}
+    )
+    url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+    if query:
+        url = f"{url}?{query}"
+    request_headers = {
+        "Accept": "application/json",
+        "User-Agent": "spread-arbitrage-input/0.1",
+    }
+    if body is not None:
+        request_headers["Content-Type"] = "application/json"
+    if headers:
+        request_headers.update(headers)
+
+    request = Request(url, data=body, headers=request_headers, method=method.upper())
+    started = perf_counter()
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            raw = response.read()
+    except HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="replace")
+        raise ExchangeAPIError(
+            f"{method.upper()} {url} failed with HTTP {exc.code}: {error_body[:400]}"
+        ) from exc
+    except URLError as exc:
+        raise ExchangeAPIError(f"{method.upper()} {url} failed: {exc.reason}") from exc
+
+    latency_ms = (perf_counter() - started) * 1000
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ExchangeAPIError(f"{method.upper()} {url} returned invalid JSON") from exc
+    if not isinstance(data, dict) and not isinstance(data, list):
+        raise ExchangeAPIError(f"{method.upper()} {url} returned unsupported JSON payload")
+    return data, latency_ms
+
+
 def hmac_sha256(secret: str, payload: str) -> str:
     return hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
 

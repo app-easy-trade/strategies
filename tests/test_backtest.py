@@ -17,6 +17,7 @@ from backtest.simulator import (
 )
 from brokers.account import AccountSnapshot, PositionSnapshot
 from brokers.account_check import format_account_report
+from brokers.order_executor import LegOrder, execute_two_leg_entry
 from backtest.optimizer import optimize
 from core.funding_engine import estimate_funding
 from core.risk_engine import evaluate_risk
@@ -47,7 +48,7 @@ class BacktestSimulatorTest(unittest.TestCase):
 
     def test_open_trade_closes_on_last_snapshot_at_end_of_data(self) -> None:
         snapshots = [
-            make_snapshot("2026-01-01T00:00:00+00:00", 4.0),
+            make_snapshot("2026-01-01T00:00:00+00:00", 6.0),
             make_snapshot("2026-01-01T00:05:00+00:00", 3.0),
         ]
 
@@ -104,7 +105,7 @@ class BacktestSimulatorTest(unittest.TestCase):
         for index, spread in enumerate([1.0, 1.1, 1.2]):
             engine.update(make_snapshot(f"2026-01-01T00:0{index}:00+00:00", spread))
 
-        features = engine.update(make_snapshot("2026-01-01T00:03:00+00:00", 3.0))
+        features = engine.update(make_snapshot("2026-01-01T00:03:00+00:00", 6.0))
         signal = evaluate_signal(features, config)
 
         self.assertTrue(signal.should_enter)
@@ -144,7 +145,7 @@ class BacktestSimulatorTest(unittest.TestCase):
         self.assertEqual(1, funding_events_crossed(entry, after_funding, config))
 
     def test_execution_simulator_skips_unfilled_leg(self) -> None:
-        snapshot = make_snapshot("2026-01-01T00:00:00+00:00", 4.0)
+        snapshot = make_snapshot("2026-01-01T00:00:00+00:00", 6.0)
         snapshot = SpreadSnapshot(
             **{
                 **snapshot.__dict__,
@@ -162,7 +163,7 @@ class BacktestSimulatorTest(unittest.TestCase):
         self.assertEqual("one_leg_unfilled", skipped[0].reason)
 
     def test_execution_simulator_skips_deteriorated_entry_spread(self) -> None:
-        snapshot = make_snapshot("2026-01-01T00:00:00+00:00", 3.0)
+        snapshot = make_snapshot("2026-01-01T00:00:00+00:00", 6.0)
         snapshot = SpreadSnapshot(
             **{
                 **snapshot.__dict__,
@@ -183,6 +184,35 @@ class BacktestSimulatorTest(unittest.TestCase):
 
         self.assertEqual([], trades)
         self.assertEqual("entry_spread_deteriorated", skipped[0].reason)
+
+    def test_cautious_spread_requires_better_execution(self) -> None:
+        snapshot = make_snapshot("2026-01-01T00:00:00+00:00", 4.0)
+        snapshot = SpreadSnapshot(
+            **{
+                **snapshot.__dict__,
+                "long_funding_rate": 0.0001,
+                "short_funding_rate": 0.0002,
+                "executable_spread_200_pct": 2.4,
+                "long_depth_usd_200": 200.0,
+                "short_depth_usd_200": 200.0,
+            }
+        )
+
+        trades, _, skipped = run_backtest(
+            [snapshot],
+            BacktestConfig(min_zscore=0, position_notional_usd=200),
+        )
+
+        self.assertEqual([], trades)
+        self.assertEqual("entry_executable_spread_below_min", skipped[0].reason)
+
+    def test_cautious_spread_requires_known_funding(self) -> None:
+        snapshot = make_snapshot("2026-01-01T00:00:00+00:00", 4.0)
+
+        trades, _, skipped = run_backtest([snapshot], BacktestConfig(min_zscore=0))
+
+        self.assertEqual([], trades)
+        self.assertEqual("cautious_funding_filter_failed", skipped[0].reason)
 
     def test_risk_engine_rejects_insufficient_margin_buffer(self) -> None:
         config = BacktestConfig(
@@ -216,8 +246,8 @@ class BacktestSimulatorTest(unittest.TestCase):
 
     def test_backtest_rejects_portfolio_margin_overuse(self) -> None:
         snapshots = [
-            make_snapshot_for_base("SOL", "2026-01-01T00:00:00+00:00", 3.0),
-            make_snapshot_for_base("ETH", "2026-01-01T00:00:00+00:00", 3.0),
+            make_snapshot_for_base("SOL", "2026-01-01T00:00:00+00:00", 6.0),
+            make_snapshot_for_base("ETH", "2026-01-01T00:00:00+00:00", 6.0),
             make_snapshot_for_base("SOL", "2026-01-01T00:05:00+00:00", 0.4),
         ]
 
@@ -364,6 +394,18 @@ class BacktestSimulatorTest(unittest.TestCase):
         self.assertIn("margin_usage=12.00%", text)
         self.assertIn("BTCUSDT Buy", text)
         self.assertIn("binance: SKIP/FAIL", text)
+
+    def test_order_executor_dry_run_does_not_send_orders(self) -> None:
+        result = execute_two_leg_entry(
+            LegOrder("bybit", "BTCUSDT", "buy", 0.001, 100000.0),
+            LegOrder("binance", "BTCUSDT", "sell", 0.001, 100000.0),
+            clients={},
+            dry_run=True,
+        )
+
+        self.assertEqual("dry_run", result.status)
+        self.assertEqual("orders_not_sent", result.reason)
+        self.assertEqual("dry-run-long-limit", result.long_limit.order_id)
 
     def test_sqlite_store_persists_open_paper_trade(self) -> None:
         config = BacktestConfig(min_zscore=0)

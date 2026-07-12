@@ -303,7 +303,9 @@ def entry_spread_guard(
     cost = execution_spread_cost_usd(signal_spread_pct, executable_spread_pct, config)
     if cost_usd is not None:
         cost = cost_usd
-    if executable_spread_pct < config.min_entry_executable_spread_pct:
+    min_executable = min_entry_executable_spread_pct(signal_spread_pct, config)
+    max_deterioration = max_entry_spread_deterioration_pct(signal_spread_pct, config)
+    if executable_spread_pct < min_executable:
         return ExecutionSimulation(
             passed=False,
             status="failed",
@@ -312,7 +314,7 @@ def entry_spread_guard(
             cost_usd=cost,
         )
     deterioration = signal_spread_pct - executable_spread_pct
-    if deterioration > config.max_entry_spread_deterioration_pct:
+    if deterioration > max_deterioration:
         return ExecutionSimulation(
             passed=False,
             status="failed",
@@ -321,6 +323,18 @@ def entry_spread_guard(
             cost_usd=cost,
         )
     return None
+
+
+def min_entry_executable_spread_pct(signal_spread_pct: float, config: BacktestConfig) -> float:
+    if config.min_spread_pct <= signal_spread_pct < config.cautious_spread_upper_pct:
+        return max(config.min_entry_executable_spread_pct, config.cautious_min_entry_executable_spread_pct)
+    return config.min_entry_executable_spread_pct
+
+
+def max_entry_spread_deterioration_pct(signal_spread_pct: float, config: BacktestConfig) -> float:
+    if config.min_spread_pct <= signal_spread_pct < config.cautious_spread_upper_pct:
+        return min(config.max_entry_spread_deterioration_pct, config.cautious_max_entry_spread_deterioration_pct)
+    return config.max_entry_spread_deterioration_pct
 
 
 def simulate_portfolio_risk(

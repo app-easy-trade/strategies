@@ -20,6 +20,7 @@ def evaluate_signal(features: SpreadFeatures, config: StrategyConfig) -> TradeSi
 
     checks = [
         (snapshot.min_quote_volume_24h >= config.min_volume_usd, "volume_below_min"),
+        (passes_cautious_volume(snapshot.spread_pct, snapshot.min_quote_volume_24h, config), "cautious_volume_below_min"),
         (snapshot.min_quote_volume_24h >= config.liquidity_check_usd, "liquidity_below_min"),
         (risk.passed, risk.reason),
         (execution.passed, execution.reason),
@@ -30,6 +31,7 @@ def evaluate_signal(features: SpreadFeatures, config: StrategyConfig) -> TradeSi
         (passes_zscore(features, config), "zscore_below_min"),
         (passes_velocity(features, config), "velocity_below_min"),
         (passes_funding(funding.expected_edge_usd, funding.edge_rate, config), "funding_filter_failed"),
+        (passes_cautious_funding(snapshot.spread_pct, funding.expected_edge_usd, funding.edge_rate, config), "cautious_funding_filter_failed"),
         (net_expected >= config.min_net_expected_profit_usd, "net_expected_profit_below_min"),
     ]
     for passed, reason in checks:
@@ -74,6 +76,33 @@ def passes_velocity(features: SpreadFeatures, config: StrategyConfig) -> bool:
 def passes_market_mode(market_mode: str, config: StrategyConfig) -> bool:
     allowed = {item.strip() for item in config.allowed_market_modes.split(",") if item.strip()}
     return market_mode in allowed
+
+
+def is_cautious_spread(spread_pct: float, config: StrategyConfig) -> bool:
+    return config.min_spread_pct <= spread_pct < config.cautious_spread_upper_pct
+
+
+def passes_cautious_volume(
+    spread_pct: float,
+    min_quote_volume_24h: float,
+    config: StrategyConfig,
+) -> bool:
+    if not is_cautious_spread(spread_pct, config):
+        return True
+    return min_quote_volume_24h >= config.cautious_min_volume_usd
+
+
+def passes_cautious_funding(
+    spread_pct: float,
+    funding_edge_usd: float,
+    funding_edge_rate: float | None,
+    config: StrategyConfig,
+) -> bool:
+    if not is_cautious_spread(spread_pct, config):
+        return True
+    if config.cautious_require_known_funding and funding_edge_rate is None:
+        return False
+    return funding_edge_usd >= -abs(config.cautious_max_funding_against_usd)
 
 
 def passes_max_spread(spread_pct: float, config: StrategyConfig) -> bool:

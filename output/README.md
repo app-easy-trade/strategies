@@ -144,7 +144,7 @@ python -m paper.paper_trader \
   --interval 60 \
   --top 1000 \
   --limit 50 \
-  --min-spread 0.5 \
+  --min-spread 3 \
   --min-volume 400000 \
   --capture-orderbooks \
   --telegram-notify
@@ -178,7 +178,7 @@ python -m output.telegram_bot \
   --once \
   --dry-run \
   --daily-control \
-  --min-spread 0.5 \
+  --min-spread 3 \
   --max-spread 10 \
   --min-volume 0 \
   --limit 10

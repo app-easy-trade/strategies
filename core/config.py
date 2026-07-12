@@ -6,9 +6,13 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class StrategyConfig:
-    min_spread_pct: float = 2.0
+    min_spread_pct: float = 3.0
     max_spread_pct: float = 0.0
     min_volume_usd: float = 400_000.0
+    cautious_spread_upper_pct: float = 5.0
+    cautious_min_volume_usd: float = 1_000_000.0
+    cautious_require_known_funding: bool = True
+    cautious_max_funding_against_usd: float = 0.0
     liquidity_check_usd: float = 1_000.0
     max_slippage_pct: float = 0.2
     min_zscore: float = 1.0
@@ -36,6 +40,8 @@ class StrategyConfig:
     one_leg_failure_penalty_pct: float = 0.15
     min_entry_executable_spread_pct: float = 1.0
     max_entry_spread_deterioration_pct: float = 0.3
+    cautious_min_entry_executable_spread_pct: float = 2.5
+    cautious_max_entry_spread_deterioration_pct: float = 0.2
     tp1_close_fraction: float = 0.5
     tp1_retrace_fraction: float = 0.5
     final_exit_spread_pct: float = 0.5

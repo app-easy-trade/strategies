@@ -20,6 +20,7 @@ python -m output.telegram_bot `
     --notify-startup `
     --send-on-start `
     --daily-control `
+    --min-spread 3 `
     --backtest-input data/spread_history_enriched_sane.csv `
     --paper-db data/paper_trading.sqlite3 `
     --account-checks `

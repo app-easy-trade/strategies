@@ -33,13 +33,13 @@ python -m src.connection_check --top 5 --timeout 20
 Scanner:
 
 ```bash
-python -m src.spread_scanner --top 50 --limit 20 --min-spread 0.5 --min-volume 400000
+python -m src.spread_scanner --top 50 --limit 20 --min-spread 3 --min-volume 400000
 ```
 
 Сбор истории:
 
 ```bash
-python -m src.spread_history_collector --interval 60 --top 1000 --min-spread 0.5 --min-volume 400000 --capture-orderbooks --output data/spread_history.csv
+python -m src.spread_history_collector --interval 60 --top 1000 --min-spread 3 --min-volume 400000 --capture-orderbooks --output data/spread_history.csv
 ```
 
 Backtest:
@@ -104,7 +104,7 @@ powershell -ExecutionPolicy Bypass -File scripts/check_telegram_bot.ps1
 ## Paper trading
 
 ```bash
-python -m paper.paper_trader --db data/paper_trading.sqlite3 --interval 60 --top 1000 --limit 50 --min-spread 0.5 --min-volume 400000 --capture-orderbooks --telegram-notify
+python -m paper.paper_trader --db data/paper_trading.sqlite3 --interval 60 --top 1000 --limit 50 --min-spread 3 --min-volume 400000 --capture-orderbooks --telegram-notify
 ```
 
 При открытии/закрытии виртуальной сделки Telegram получает base, биржи, LONG/SHORT ноги, spread, размер позиции, funding, expected net, PnL и TradingView формулу.
@@ -132,6 +132,39 @@ python -m brokers.account_check --exchanges bybit,binance
 ```
 
 В Telegram daily report эти проверки включены в `scripts/start_telegram_bot.ps1` через `--account-checks`.
+
+## Demo/testnet order executor
+
+Реальные заявки по умолчанию не включены. Для проверки на demo/testnet добавлен отдельный executor для Bybit/Binance USDT futures.
+
+Логика входа:
+
+1. Отправить агрессивную IOC limit-заявку на LONG ногу.
+2. Отправить агрессивную IOC limit-заявку на SHORT ногу.
+3. Ждать `--order-timeout` секунд.
+4. Если обе ноги исполнились, вход готов.
+5. Если одна нога исполнилась, а вторая нет, отменить неисполненную limit-заявку и добить вторую ногу market.
+6. Если ни одна не исполнилась, отменить обе.
+
+Сначала проверить без отправки ордеров:
+
+```bash
+python -m brokers.order_executor \
+  --dry-run \
+  --long-exchange bybit --long-symbol BTCUSDT --long-qty 0.001 --long-limit-price 100000 \
+  --short-exchange binance --short-symbol BTCUSDT --short-qty 0.001 --short-limit-price 100000
+```
+
+Для testnet:
+
+```bash
+python -m brokers.order_executor \
+  --testnet \
+  --long-exchange bybit --long-symbol BTCUSDT --long-qty 0.001 --long-limit-price 100000 \
+  --short-exchange binance --short-symbol BTCUSDT --short-qty 0.001 --short-limit-price 100000
+```
+
+Для real endpoints нужен отдельный флаг `--allow-real-orders`; без него executor откажется отправлять реальные заявки.
 
 ## Funding
 
