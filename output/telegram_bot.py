@@ -135,6 +135,35 @@ def get_chat_ids(token: str, timeout: float = 20.0) -> list[tuple[str, str]]:
     return sorted(chats.items(), key=lambda item: item[1])
 
 
+def get_updates(token: str, offset: int | None, timeout: float = 20.0) -> list[dict[str, Any]]:
+    payload: dict[str, Any] = {"timeout": int(timeout)}
+    if offset is not None:
+        payload["offset"] = offset
+    data = telegram_request(token, "getUpdates", payload, timeout=timeout + 5)
+    updates = data.get("result", [])
+    return [update for update in updates if isinstance(update, dict)]
+
+
+def load_subscribers(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return set()
+    if not isinstance(data, list):
+        return set()
+    return {str(item) for item in data if str(item).strip()}
+
+
+def save_subscribers(path: Path, subscribers: set[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(sorted(subscribers), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
 def collect_rows(args: argparse.Namespace) -> list[SpreadRow]:
     rows, _ = scan_spreads(
         exchanges=exchange_names(args.exchanges),
@@ -331,7 +360,7 @@ def normalize_tv_symbol(symbol: str) -> str:
     return value.replace("-", "").replace("_", "")
 
 
-def run_once(args: argparse.Namespace, token: str | None, chat_id: str | None) -> list[SpreadRow]:
+def build_message(args: argparse.Namespace) -> tuple[str, list[SpreadRow]]:
     started_at = datetime.now()
     rows = collect_rows(args)
     if args.daily_control:
@@ -347,6 +376,11 @@ def run_once(args: argparse.Namespace, token: str | None, chat_id: str | None) -
             min_volume=args.min_volume,
             require_funding_favorable=args.require_funding_favorable,
         )
+    return text, rows
+
+
+def run_once(args: argparse.Namespace, token: str | None, chat_id: str | None) -> list[SpreadRow]:
+    text, rows = build_message(args)
 
     print(text)
     if args.csv:
@@ -365,6 +399,120 @@ def run_once(args: argparse.Namespace, token: str | None, chat_id: str | None) -
     send_message(token, chat_id, text, timeout=args.telegram_timeout)
     print("Telegram message sent.")
     return rows
+
+
+def run_command_listener(args: argparse.Namespace, token: str) -> None:
+    subscribers = load_subscribers(args.subscribers_file)
+    offset: int | None = None
+    last_auto_report = datetime.now().timestamp()
+    print(
+        "Telegram command listener started: "
+        f"subscribers={len(subscribers)}, poll={args.command_poll_interval}s, "
+        f"auto_report={args.auto_report_interval}s"
+    )
+
+    while True:
+        try:
+            updates = get_updates(token, offset, timeout=args.telegram_timeout)
+            for update in updates:
+                update_id = update.get("update_id")
+                if isinstance(update_id, int):
+                    offset = update_id + 1
+                handle_update(args, token, update, subscribers)
+            save_subscribers(args.subscribers_file, subscribers)
+
+            now_ts = datetime.now().timestamp()
+            if (
+                args.auto_report_interval > 0
+                and subscribers
+                and now_ts - last_auto_report >= args.auto_report_interval
+            ):
+                send_auto_report(args, token, subscribers)
+                last_auto_report = now_ts
+        except Exception as exc:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[{timestamp}] Telegram listener failed: {type(exc).__name__}: {exc}")
+        sleep(args.command_poll_interval)
+
+
+def handle_update(
+    args: argparse.Namespace,
+    token: str,
+    update: dict[str, Any],
+    subscribers: set[str],
+) -> None:
+    message = update.get("message") or update.get("channel_post")
+    if not isinstance(message, dict):
+        return
+    chat = message.get("chat")
+    if not isinstance(chat, dict) or chat.get("id") is None:
+        return
+    chat_id = str(chat["id"])
+    text = str(message.get("text") or "").strip()
+    if not text.startswith("/"):
+        return
+    command = text.split()[0].split("@", 1)[0].lower()
+
+    if command == "/start":
+        subscribers.add(chat_id)
+        send_message(token, chat_id, command_help_text(started=True), timeout=args.telegram_timeout)
+        if args.send_on_start:
+            send_report_to_chat(args, token, chat_id)
+        return
+    if command == "/stop":
+        subscribers.discard(chat_id)
+        send_message(token, chat_id, "Autonomous reports stopped.", timeout=args.telegram_timeout)
+        return
+    if command in {"/help", "/commands"}:
+        send_message(token, chat_id, command_help_text(), timeout=args.telegram_timeout)
+        return
+    if command in {"/daily", "/report"}:
+        send_report_to_chat(args, token, chat_id)
+        return
+    if command == "/paper":
+        send_message(
+            token,
+            chat_id,
+            build_paper_trades_text(Path(args.paper_db), args.paper_limit)
+            if args.paper_db
+            else "Open paper trades:\n- paper DB is not configured.",
+            timeout=args.telegram_timeout,
+        )
+        return
+    if command == "/status":
+        send_message(
+            token,
+            chat_id,
+            f"Bot is running. Subscribers: {len(subscribers)}. Auto report interval: {args.auto_report_interval}s.",
+            timeout=args.telegram_timeout,
+        )
+
+
+def send_auto_report(args: argparse.Namespace, token: str, subscribers: set[str]) -> None:
+    for chat_id in sorted(subscribers):
+        send_report_to_chat(args, token, chat_id)
+
+
+def send_report_to_chat(args: argparse.Namespace, token: str, chat_id: str) -> None:
+    try:
+        text, _ = build_message(args)
+    except Exception as exc:
+        text = f"Daily Control failed: {type(exc).__name__}: {exc}"
+    send_message(token, chat_id, text, timeout=args.telegram_timeout)
+
+
+def command_help_text(started: bool = False) -> str:
+    prefix = "Autonomous reports started.\n\n" if started else ""
+    return (
+        prefix
+        + "Commands:\n"
+        + "/start - subscribe and start autonomous reports\n"
+        + "/daily - send scanner/backtest/paper report now\n"
+        + "/paper - show open paper trades\n"
+        + "/status - show bot status\n"
+        + "/stop - stop autonomous reports\n"
+        + "/help - show this help"
+    )
 
 
 def split_message(text: str) -> list[str]:
@@ -425,6 +573,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--once", action="store_true", help="Send one Telegram alert/report and exit.")
     parser.add_argument("--dry-run", action="store_true", help="Print message without sending it.")
     parser.add_argument("--get-chat-id", action="store_true", help="Print chat IDs from recent bot updates.")
+    parser.add_argument("--listen-commands", action="store_true", help="Listen for /start, /daily, /paper, /stop commands.")
+    parser.add_argument("--subscribers-file", type=Path, default=Path("data/telegram_subscribers.json"))
+    parser.add_argument("--command-poll-interval", type=int, default=3)
+    parser.add_argument("--auto-report-interval", type=int, default=86_400)
+    parser.add_argument("--send-on-start", action="store_true", help="Send the first report immediately after /start.")
     return parser
 
 
@@ -444,6 +597,13 @@ def main() -> None:
             return
         for found_chat_id, title in chats:
             print(f"{found_chat_id} {title}")
+        return
+
+    if args.listen_commands:
+        if not token:
+            raise TelegramBotError("TELEGRAM_BOT_TOKEN is not set")
+        args.daily_control = True
+        run_command_listener(args, token)
         return
 
     if args.once:

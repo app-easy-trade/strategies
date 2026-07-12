@@ -77,6 +77,31 @@ python -m output.telegram_bot \
   --interval 86400
 ```
 
+## Автономный режим
+
+В этом режиме достаточно написать боту `/start`. Он сохранит chat id, сразу начнет слушать команды и дальше будет сам отправлять отчеты по расписанию.
+
+```bash
+python -m output.telegram_bot \
+  --listen-commands \
+  --send-on-start \
+  --daily-control \
+  --backtest-input data/spread_history_enriched_sane.csv \
+  --paper-db data/paper_trading.sqlite3 \
+  --auto-report-interval 86400
+```
+
+Команды внутри Telegram:
+
+- `/start` - подписаться и запустить автономные отчеты.
+- `/daily` - прислать scanner/backtest/paper отчет сейчас.
+- `/paper` - показать открытые paper trades.
+- `/status` - показать статус бота.
+- `/stop` - остановить автономные отчеты для этого чата.
+- `/help` - показать команды.
+
+Список подписчиков хранится в `data/telegram_subscribers.json`.
+
 Добавить backtest report:
 
 ```bash
@@ -102,6 +127,19 @@ python -m paper.paper_trader \
 ```
 
 При открытии сделки бот присылает base, биржи, LONG/SHORT ноги, spread, размер позиции, funding, expected net и TradingView формулу.
+
+Статистика по закрытым сделкам хранится в CSV:
+
+```text
+data/backtest_enriched_sane_trades.csv
+data/backtest_enriched_sane_skipped.csv
+```
+
+Посмотреть отчет вручную:
+
+```bash
+python -m backtest.report --trades-csv data/backtest_enriched_sane_trades.csv --skipped-csv data/backtest_enriched_sane_skipped.csv
+```
 
 Показывать только сделки, где funding явно в нашу сторону:
 
