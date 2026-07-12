@@ -11,6 +11,13 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from backtest.report import build_report, format_report
+from backtest.simulator import (
+    load_config as load_backtest_config,
+    read_snapshots,
+    run_backtest,
+    write_skipped_signals,
+    write_trades,
+)
 from src.connection_check import check_exchange
 from src.spread_monitor import filter_rows
 from src.spread_scanner import (
@@ -224,12 +231,9 @@ def build_daily_control_text(args: argparse.Namespace, rows: list[SpreadRow]) ->
         ]
     )
 
-    if args.backtest_trades:
-        report = build_report(
-            Path(args.backtest_trades),
-            Path(args.backtest_skipped) if args.backtest_skipped else None,
-        )
-        lines.extend(["", format_report(report)])
+    backtest_text = build_backtest_text(args)
+    if backtest_text:
+        lines.extend(["", backtest_text])
 
     if args.paper_db:
         lines.extend(["", build_paper_trades_text(Path(args.paper_db), args.paper_limit)])
@@ -243,6 +247,34 @@ def build_daily_control_text(args: argparse.Namespace, rows: list[SpreadRow]) ->
         ]
     )
     return "\n".join(lines)
+
+
+def build_backtest_text(args: argparse.Namespace) -> str | None:
+    backtest_input = getattr(args, "backtest_input", None)
+    if backtest_input:
+        input_path = Path(backtest_input)
+        if not input_path.exists():
+            return f"Backtest report\nInput not found: {input_path}"
+        output_dir = Path(getattr(args, "backtest_output_dir", "data"))
+        output_dir.mkdir(parents=True, exist_ok=True)
+        trades_path = output_dir / "telegram_backtest_trades.csv"
+        skipped_path = output_dir / "telegram_backtest_skipped_signals.csv"
+        config_path = Path(getattr(args, "backtest_config", "config/backtest.yaml"))
+        config = load_backtest_config(config_path if config_path.exists() else None)
+        trades, _, skipped = run_backtest(read_snapshots(input_path), config)
+        write_trades(trades_path, trades)
+        write_skipped_signals(skipped_path, skipped)
+        return format_report(build_report(trades_path, skipped_path))
+
+    backtest_trades = getattr(args, "backtest_trades", None)
+    if not backtest_trades:
+        return None
+    return format_report(
+        build_report(
+            Path(backtest_trades),
+            Path(args.backtest_skipped) if getattr(args, "backtest_skipped", None) else None,
+        )
+    )
 
 
 def build_paper_trades_text(db_path: Path, limit: int) -> str:
@@ -380,6 +412,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--telegram-timeout", type=float, default=20.0)
     parser.add_argument("--csv", default="data/telegram_spreads_latest.csv")
     parser.add_argument("--daily-control", action="store_true", help="Send API/funding/signals/backtest control report.")
+    parser.add_argument("--backtest-input", default=None, help="Optional spread history CSV to backtest before daily report.")
+    parser.add_argument("--backtest-config", default="config/backtest.yaml")
+    parser.add_argument("--backtest-output-dir", default="data")
     parser.add_argument("--backtest-trades", default=None, help="Optional backtest trades CSV for daily report.")
     parser.add_argument("--backtest-skipped", default=None, help="Optional skipped signals CSV for daily report.")
     parser.add_argument("--paper-db", default=None, help="Optional paper trading SQLite DB for open trade report.")

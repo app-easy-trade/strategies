@@ -58,6 +58,16 @@ python -m output.telegram_bot \
   --paper-db data/paper_trading.sqlite3
 ```
 
+Daily control с автоматическим пересчетом backtest из свежей истории:
+
+```bash
+python -m output.telegram_bot \
+  --once \
+  --daily-control \
+  --backtest-input data/spread_history_enriched_sane.csv \
+  --paper-db data/paper_trading.sqlite3
+```
+
 Daily control каждый день:
 
 ```bash
@@ -76,6 +86,22 @@ python -m output.telegram_bot \
   --backtest-trades data/backtest_trades.csv \
   --backtest-skipped data/backtest_skipped_signals.csv
 ```
+
+Paper trading с Telegram-уведомлениями об открытии/закрытии виртуальных сделок:
+
+```bash
+python -m paper.paper_trader \
+  --db data/paper_trading.sqlite3 \
+  --interval 60 \
+  --top 1000 \
+  --limit 50 \
+  --min-spread 0.5 \
+  --min-volume 400000 \
+  --capture-orderbooks \
+  --telegram-notify
+```
+
+При открытии сделки бот присылает base, биржи, LONG/SHORT ноги, spread, размер позиции, funding, expected net и TradingView формулу.
 
 Показывать только сделки, где funding явно в нашу сторону:
 

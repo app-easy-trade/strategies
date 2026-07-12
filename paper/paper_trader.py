@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +18,7 @@ from src.spread_monitor import filter_rows
 from src.spread_scanner import DEFAULT_MAX_SANE_SPREAD_PCT, DEFAULT_TOP, SpreadRow, scan_spreads
 from src.universe import exchange_names
 from storage.sqlite_store import OpenPaperTrade, SQLiteStore
+from output.telegram_bot import load_env_file, send_message, spread_tv_formula
 
 
 IMPACT_NOTIONALS = [200.0, 500.0, 1_000.0]
@@ -30,6 +32,12 @@ class PaperRunSummary:
     updated: int
     skipped: int
     open_trades: int
+
+
+@dataclass(frozen=True)
+class TradeUpdate:
+    status: str
+    message: str | None = None
 
 
 def utc_now() -> datetime:
@@ -142,14 +150,17 @@ def run_once(args: argparse.Namespace, config: StrategyConfig, store: SQLiteStor
 
         open_trade = store.get_open_trade_by_key(key)
         if open_trade:
-            result = update_open_trade(store, open_trade, row, timestamp_dt, config)
-            closed += int(result == "closed")
-            updated += int(result == "updated")
+            update = update_open_trade(store, open_trade, row, timestamp_dt, config)
+            closed += int(update.status == "closed")
+            updated += int(update.status == "updated")
+            if update.message:
+                notify_telegram(args, update.message)
             continue
 
         if signal.should_enter:
             trade_id = store.insert_open_trade(timestamp, key, signal)
             opened += 1
+            notify_telegram(args, build_open_message(row, signal.net_expected_profit_usd, config, timestamp))
             if args.capture_orderbooks:
                 store_orderbook_impacts(store, timestamp, key, row, args.timeout)
         else:
@@ -163,9 +174,11 @@ def run_once(args: argparse.Namespace, config: StrategyConfig, store: SQLiteStor
             seen_keys.add(open_trade.trade_key)
             snapshot = row_to_snapshot(row, timestamp_dt)
             store.insert_spread_snapshot(timestamp, snapshot)
-            result = update_open_trade(store, open_trade, row, timestamp_dt, config)
-            closed += int(result == "closed")
-            updated += int(result == "updated")
+            update = update_open_trade(store, open_trade, row, timestamp_dt, config)
+            closed += int(update.status == "closed")
+            updated += int(update.status == "updated")
+            if update.message:
+                notify_telegram(args, update.message)
         elif args.close_missing:
             store.close_trade(
                 open_trade.id,
@@ -179,6 +192,7 @@ def run_once(args: argparse.Namespace, config: StrategyConfig, store: SQLiteStor
                 open_trade.realized_pnl_usd,
             )
             closed += 1
+            notify_telegram(args, build_missing_close_message(open_trade, timestamp))
 
     store.commit()
     open_count = len(store.list_open_trades())
@@ -198,7 +212,7 @@ def update_open_trade(
     row: SpreadRow,
     timestamp: datetime,
     config: StrategyConfig,
-) -> str:
+) -> TradeUpdate:
     max_spread = max(trade.max_spread_pct, row.spread_pct)
     remaining = trade.remaining_fraction
     realized = trade.realized_pnl_usd
@@ -230,10 +244,13 @@ def update_open_trade(
             tp1_done,
             realized,
         )
-        return "closed"
+        return TradeUpdate(
+            "closed",
+            build_close_message(trade, row, net_pnl, reason, remaining, tp1_done, config),
+        )
 
     store.update_open_trade(trade.id, max_spread, remaining, tp1_done, realized)
-    return "updated"
+    return TradeUpdate("updated")
 
 
 def exit_reason(
@@ -303,6 +320,78 @@ def parse_time(value: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def notify_telegram(args: argparse.Namespace, text: str) -> None:
+    if not args.telegram_notify:
+        return
+    token = args.telegram_bot_token or os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = args.telegram_chat_id or os.getenv("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        print("Telegram notify skipped: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is not set")
+        return
+    try:
+        send_message(token, chat_id, text, timeout=args.telegram_timeout)
+    except Exception as exc:
+        print(f"Telegram notify failed: {type(exc).__name__}: {exc}")
+
+
+def build_open_message(
+    row: SpreadRow,
+    net_expected_profit_usd: float,
+    config: StrategyConfig,
+    timestamp: str,
+) -> str:
+    return "\n".join(
+        [
+            f"Paper trade opened | {timestamp}",
+            f"{row.base} {row.long_exchange}->{row.short_exchange}",
+            f"Spread: {row.spread_pct:.4f}%",
+            f"Position: {config.position_notional_usd:.2f} USD per leg | leverage {config.leverage:g}x",
+            f"LONG {row.long_exchange} {row.long_symbol} ask={row.long_ask:.8g}",
+            f"SHORT {row.short_exchange} {row.short_symbol} bid={row.short_bid:.8g}",
+            f"Funding: {row.funding_edge_pct if row.funding_edge_pct is not None else 'unknown'} {row.funding_status}",
+            f"Expected net: {net_expected_profit_usd:.4f} USD",
+            f"TV: {spread_tv_formula(row.short_exchange, row.short_symbol, row.long_exchange, row.long_symbol)}",
+        ]
+    )
+
+
+def build_close_message(
+    trade: OpenPaperTrade,
+    row: SpreadRow,
+    net_pnl: float,
+    reason: str,
+    remaining_fraction: float,
+    tp1_done: bool,
+    config: StrategyConfig,
+) -> str:
+    return "\n".join(
+        [
+            f"Paper trade closed | {format_time(utc_now())}",
+            f"{trade.base} {trade.long_exchange}->{trade.short_exchange}",
+            f"Entry spread: {trade.entry_spread_pct:.4f}%",
+            f"Exit spread: {row.spread_pct:.4f}%",
+            f"Reason: {reason}",
+            f"Position: {config.position_notional_usd:.2f} USD per leg",
+            f"Remaining: {remaining_fraction:.2f} | TP1: {tp1_done}",
+            f"Net PnL: {net_pnl:.4f} USD",
+            f"TV: {spread_tv_formula(trade.short_exchange, trade.short_symbol, trade.long_exchange, trade.long_symbol)}",
+        ]
+    )
+
+
+def build_missing_close_message(trade: OpenPaperTrade, timestamp: str) -> str:
+    return "\n".join(
+        [
+            f"Paper trade closed | {timestamp}",
+            f"{trade.base} {trade.long_exchange}->{trade.short_exchange}",
+            "Reason: missing_from_scan",
+            f"Entry spread: {trade.entry_spread_pct:.4f}%",
+            f"Remaining: {trade.remaining_fraction:.2f} | TP1: {trade.tp1_done}",
+            f"TV: {spread_tv_formula(trade.short_exchange, trade.short_symbol, trade.long_exchange, trade.long_symbol)}",
+        ]
+    )
+
+
 def print_summary(summary: PaperRunSummary) -> None:
     print(
         "Paper run: "
@@ -333,6 +422,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_MAX_SANE_SPREAD_PCT,
         help="Drop likely incompatible contracts above this spread percent; <=0 disables.",
     )
+    parser.add_argument("--telegram-notify", action="store_true", help="Send Telegram notifications on paper open/close.")
+    parser.add_argument("--telegram-env", type=Path, default=Path(".env"))
+    parser.add_argument("--telegram-bot-token", default=None)
+    parser.add_argument("--telegram-chat-id", default=None)
+    parser.add_argument("--telegram-timeout", type=float, default=20.0)
     parser.add_argument("--interval", type=int, default=60)
     parser.add_argument("--once", action="store_true")
     return parser
@@ -340,6 +434,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
+    load_env_file(args.telegram_env)
     config = load_strategy_config(args.config if args.config.exists() else None)
     config = replace(
         config,
