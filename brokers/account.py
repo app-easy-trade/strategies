@@ -43,11 +43,12 @@ def fetch_account_snapshot(
     api_secret: str,
     passphrase: str | None = None,
     testnet: bool = False,
+    demo: bool = False,
     timeout: float = 10.0,
 ) -> AccountSnapshot:
     name = exchange.lower().strip()
     if name == "bybit":
-        return fetch_bybit_account(api_key, api_secret, testnet=testnet, timeout=timeout)
+        return fetch_bybit_account(api_key, api_secret, testnet=testnet, demo=demo, timeout=timeout)
     if name == "binance":
         return fetch_binance_account(api_key, api_secret, testnet=testnet, timeout=timeout)
     raise ExchangeAPIError(f"Read-only account check is not implemented for {exchange}")
@@ -57,9 +58,10 @@ def fetch_bybit_account(
     api_key: str,
     api_secret: str,
     testnet: bool = False,
+    demo: bool = False,
     timeout: float = 10.0,
 ) -> AccountSnapshot:
-    base_url = "https://api-testnet.bybit.com" if testnet else "https://api.bybit.com"
+    base_url = bybit_private_base_url(testnet=testnet, demo=demo)
     wallet = bybit_signed_get(
         base_url,
         "/v5/account/wallet-balance",
@@ -98,6 +100,14 @@ def fetch_bybit_account(
         margin_usage_pct=usage_pct(initial_margin, equity),
         positions=positions,
     )
+
+
+def bybit_private_base_url(testnet: bool = False, demo: bool = False) -> str:
+    if demo:
+        return "https://api-demo.bybit.com"
+    if testnet:
+        return "https://api-testnet.bybit.com"
+    return "https://api.bybit.com"
 
 
 def fetch_binance_account(

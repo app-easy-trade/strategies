@@ -118,6 +118,7 @@ python -m paper.paper_trader --db data/paper_trading.sqlite3 --interval 60 --top
 ```bash
 BYBIT_API_KEY=...
 BYBIT_API_SECRET=...
+BYBIT_DEMO=false
 BYBIT_TESTNET=false
 
 BINANCE_API_KEY=...
@@ -163,6 +164,9 @@ python -m brokers.order_executor \
   --long-exchange bybit --long-symbol BTCUSDT --long-qty 0.001 --long-limit-price 100000 \
   --short-exchange binance --short-symbol BTCUSDT --short-qty 0.001 --short-limit-price 100000
 ```
+
+Для Bybit Demo Trading ключей используй `BYBIT_DEMO=true` в `.env` или флаг `--bybit-demo`.
+Bybit Demo Trading работает через `https://api-demo.bybit.com`; это не то же самое, что testnet.
 
 Для real endpoints нужен отдельный флаг `--allow-real-orders`; без него executor откажется отправлять реальные заявки.
 

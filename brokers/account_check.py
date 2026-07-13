@@ -21,19 +21,20 @@ def load_env_file(path: Path = Path(".env")) -> None:
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
-def load_credentials(exchange: str) -> tuple[str | None, str | None, str | None, bool]:
+def load_credentials(exchange: str) -> tuple[str | None, str | None, str | None, bool, bool]:
     prefix = exchange.upper()
     key = os.getenv(f"{prefix}_API_KEY")
     secret = os.getenv(f"{prefix}_API_SECRET")
     passphrase = os.getenv(f"{prefix}_API_PASSPHRASE")
     testnet = os.getenv(f"{prefix}_TESTNET", "").lower() in {"1", "true", "yes"}
-    return key, secret, passphrase, testnet
+    demo = os.getenv(f"{prefix}_DEMO", "").lower() in {"1", "true", "yes"}
+    return key, secret, passphrase, testnet, demo
 
 
 def check_accounts(exchanges: list[str], timeout: float) -> list[tuple[str, AccountSnapshot | None, str | None]]:
     results: list[tuple[str, AccountSnapshot | None, str | None]] = []
     for exchange in exchanges:
-        key, secret, passphrase, testnet = load_credentials(exchange)
+        key, secret, passphrase, testnet, demo = load_credentials(exchange)
         if not key or not secret:
             results.append((exchange, None, "missing API key/secret"))
             continue
@@ -44,6 +45,7 @@ def check_accounts(exchanges: list[str], timeout: float) -> list[tuple[str, Acco
                 secret,
                 passphrase=passphrase,
                 testnet=testnet,
+                demo=demo,
                 timeout=timeout,
             )
         except Exception as exc:

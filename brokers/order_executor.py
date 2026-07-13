@@ -9,6 +9,7 @@ from time import sleep, time
 from typing import Any
 from urllib.parse import urlencode
 
+from .account import bybit_private_base_url
 from .account_check import load_env_file
 from .common import ExchangeAPIError, hmac_sha256, http_request_json_any, to_float
 
@@ -134,11 +135,18 @@ def dry_run_result(long_leg: LegOrder, short_leg: LegOrder) -> TwoLegExecutionRe
 
 
 class BybitOrderClient(ExchangeOrderClient):
-    def __init__(self, api_key: str, api_secret: str, testnet: bool = True, timeout: float = 10.0) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        api_secret: str,
+        testnet: bool = True,
+        demo: bool = False,
+        timeout: float = 10.0,
+    ) -> None:
         self.api_key = api_key
         self.api_secret = api_secret
         self.timeout = timeout
-        self.base_url = "https://api-testnet.bybit.com" if testnet else "https://api.bybit.com"
+        self.base_url = bybit_private_base_url(testnet=testnet, demo=demo)
 
     def place_limit(self, leg: LegOrder) -> OrderState:
         payload = {
@@ -295,7 +303,12 @@ class BinanceOrderClient(ExchangeOrderClient):
         return data
 
 
-def build_clients(exchanges: set[str], testnet: bool, timeout: float) -> dict[str, ExchangeOrderClient]:
+def build_clients(
+    exchanges: set[str],
+    testnet: bool,
+    bybit_demo: bool,
+    timeout: float,
+) -> dict[str, ExchangeOrderClient]:
     clients: dict[str, ExchangeOrderClient] = {}
     for exchange in exchanges:
         key = os.getenv(f"{exchange.upper()}_API_KEY")
@@ -303,7 +316,13 @@ def build_clients(exchanges: set[str], testnet: bool, timeout: float) -> dict[st
         if not key or not secret:
             raise ExchangeAPIError(f"{exchange.upper()}_API_KEY/API_SECRET are not set")
         if exchange == "bybit":
-            clients[exchange] = BybitOrderClient(key, secret, testnet=testnet, timeout=timeout)
+            clients[exchange] = BybitOrderClient(
+                key,
+                secret,
+                testnet=testnet,
+                demo=bybit_demo,
+                timeout=timeout,
+            )
         elif exchange == "binance":
             clients[exchange] = BinanceOrderClient(key, secret, testnet=testnet, timeout=timeout)
         else:
@@ -345,6 +364,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Testnet two-leg aggressive limit executor.")
     parser.add_argument("--env", type=Path, default=Path(".env"))
     parser.add_argument("--testnet", action="store_true", help="Required unless --dry-run is used.")
+    parser.add_argument("--bybit-demo", action="store_true", help="Use Bybit Demo Trading endpoint for Bybit orders.")
     parser.add_argument("--dry-run", action="store_true", help="Print the execution plan without sending orders.")
     parser.add_argument("--allow-real-orders", action="store_true", help="Dangerous: allow non-testnet endpoints.")
     parser.add_argument("--timeout", type=float, default=10.0)
@@ -363,13 +383,15 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
     load_env_file(args.env)
-    if not args.dry_run and not args.testnet and not args.allow_real_orders:
-        raise SystemExit("Refusing to send orders: use --testnet or --dry-run.")
+    bybit_demo = args.bybit_demo or os.getenv("BYBIT_DEMO", "").lower() in {"1", "true", "yes"}
+    if not args.dry_run and not args.testnet and not bybit_demo and not args.allow_real_orders:
+        raise SystemExit("Refusing to send orders: use --testnet, --bybit-demo or --dry-run.")
     long_leg = LegOrder(args.long_exchange, args.long_symbol.upper(), "buy", args.long_qty, args.long_limit_price)
     short_leg = LegOrder(args.short_exchange, args.short_symbol.upper(), "sell", args.short_qty, args.short_limit_price)
     clients = {} if args.dry_run else build_clients(
         {long_leg.exchange, short_leg.exchange},
         testnet=args.testnet,
+        bybit_demo=bybit_demo,
         timeout=args.timeout,
     )
     result = execute_two_leg_entry(
