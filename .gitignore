@@ -5,5 +5,7 @@ __pycache__/
 
 data/*.csv
 data/*.log
+data/*.pid
 data/*.sqlite
 data/*.sqlite3
+data/*.json

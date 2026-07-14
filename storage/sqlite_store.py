@@ -113,6 +113,30 @@ class OpenPaperTrade:
     entry_short_funding_rate: float | None
 
 
+@dataclass(frozen=True)
+class PaperTradeRecord:
+    id: int
+    trade_key: str
+    status: str
+    base: str
+    pair: str
+    long_exchange: str
+    short_exchange: str
+    long_symbol: str
+    short_symbol: str
+    entry_time: str
+    exit_time: str | None
+    entry_spread_pct: float
+    exit_spread_pct: float | None
+    max_spread_pct: float
+    remaining_fraction: float
+    tp1_done: bool
+    realized_pnl_usd: float
+    net_pnl_usd: float | None
+    exit_reason: str | None
+    entry_net_expected_profit_usd: float
+
+
 class SQLiteStore:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -223,6 +247,18 @@ class SQLiteStore:
         ).fetchall()
         return [open_trade_from_row(row) for row in rows]
 
+    def list_recent_trades(self, since_timestamp: str, limit: int) -> list[PaperTradeRecord]:
+        rows = self.conn.execute(
+            """
+            SELECT * FROM paper_trades
+            WHERE entry_time >= ? OR (exit_time IS NOT NULL AND exit_time >= ?)
+            ORDER BY COALESCE(exit_time, entry_time) DESC
+            LIMIT ?
+            """,
+            (since_timestamp, since_timestamp, limit),
+        ).fetchall()
+        return [paper_trade_record_from_row(row) for row in rows]
+
     def update_open_trade(
         self,
         trade_id: int,
@@ -328,4 +364,29 @@ def open_trade_from_row(row: sqlite3.Row) -> OpenPaperTrade:
         entry_net_expected_profit_usd=float(row["entry_net_expected_profit_usd"]),
         entry_long_funding_rate=row["entry_long_funding_rate"],
         entry_short_funding_rate=row["entry_short_funding_rate"],
+    )
+
+
+def paper_trade_record_from_row(row: sqlite3.Row) -> PaperTradeRecord:
+    return PaperTradeRecord(
+        id=int(row["id"]),
+        trade_key=str(row["trade_key"]),
+        status=str(row["status"]),
+        base=str(row["base"]),
+        pair=str(row["pair"]),
+        long_exchange=str(row["long_exchange"]),
+        short_exchange=str(row["short_exchange"]),
+        long_symbol=str(row["long_symbol"]),
+        short_symbol=str(row["short_symbol"]),
+        entry_time=str(row["entry_time"]),
+        exit_time=str(row["exit_time"]) if row["exit_time"] is not None else None,
+        entry_spread_pct=float(row["entry_spread_pct"]),
+        exit_spread_pct=float(row["exit_spread_pct"]) if row["exit_spread_pct"] is not None else None,
+        max_spread_pct=float(row["max_spread_pct"]),
+        remaining_fraction=float(row["remaining_fraction"]),
+        tp1_done=bool(row["tp1_done"]),
+        realized_pnl_usd=float(row["realized_pnl_usd"]),
+        net_pnl_usd=float(row["net_pnl_usd"]) if row["net_pnl_usd"] is not None else None,
+        exit_reason=str(row["exit_reason"]) if row["exit_reason"] is not None else None,
+        entry_net_expected_profit_usd=float(row["entry_net_expected_profit_usd"]),
     )

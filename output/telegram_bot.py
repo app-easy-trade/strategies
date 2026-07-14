@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import sleep
 from typing import Any
@@ -287,7 +287,9 @@ def build_daily_control_text(args: argparse.Namespace, rows: list[SpreadRow]) ->
         lines.extend(["", backtest_text])
 
     if args.paper_db:
-        lines.extend(["", build_paper_trades_text(Path(args.paper_db), args.paper_limit)])
+        paper_db = Path(args.paper_db)
+        lines.extend(["", build_recent_paper_activity_text(paper_db, args.paper_recent_hours, args.paper_recent_limit)])
+        lines.extend(["", build_paper_trades_text(paper_db, args.paper_limit)])
 
     if getattr(args, "account_checks", False):
         lines.extend(["", build_account_checks_text(args)])
@@ -360,6 +362,40 @@ def build_paper_trades_text(db_path: Path, limit: int) -> str:
         lines.append(
             f"   TV: {spread_tv_formula(trade.short_exchange, trade.short_symbol, trade.long_exchange, trade.long_symbol)}"
         )
+    if len(trades) > limit:
+        lines.append(f"- hidden: {len(trades) - limit}")
+    return "\n".join(lines)
+
+
+def build_recent_paper_activity_text(db_path: Path, hours: float, limit: int) -> str:
+    if not db_path.exists():
+        return f"Paper activity last {hours:g}h:\n- database not found: {db_path}"
+
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat().replace("+00:00", "Z")
+    store = SQLiteStore(db_path)
+    try:
+        trades = store.list_recent_trades(since, limit)
+    finally:
+        store.close()
+
+    opened = [trade for trade in trades if trade.entry_time >= since]
+    closed = [trade for trade in trades if trade.exit_time is not None and trade.exit_time >= since]
+    lines = [f"Paper activity last {hours:g}h: opened={len(opened)} closed={len(closed)}"]
+    if not trades:
+        lines.append("- no paper trade activity")
+        return "\n".join(lines)
+
+    for index, trade in enumerate(trades[:limit], start=1):
+        marker = "OPEN" if trade.status == "open" else f"CLOSED {trade.exit_reason or ''}".strip()
+        pnl = "n/a" if trade.net_pnl_usd is None else f"{trade.net_pnl_usd:.4f}"
+        lines.append(
+            f"{index}. {marker} {trade.base} {trade.long_exchange}->{trade.short_exchange} "
+            f"entry={trade.entry_spread_pct:.4f}% max={trade.max_spread_pct:.4f}% pnl={pnl}"
+        )
+        lines.append(f"   entry_time={trade.entry_time}")
+        if trade.exit_time:
+            exit_spread = "n/a" if trade.exit_spread_pct is None else f"{trade.exit_spread_pct:.4f}%"
+            lines.append(f"   exit_time={trade.exit_time} exit_spread={exit_spread}")
     if len(trades) > limit:
         lines.append(f"- hidden: {len(trades) - limit}")
     return "\n".join(lines)
@@ -628,6 +664,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--backtest-skipped", default=None, help="Optional skipped signals CSV for daily report.")
     parser.add_argument("--paper-db", default=None, help="Optional paper trading SQLite DB for open trade report.")
     parser.add_argument("--paper-limit", type=int, default=10, help="Max open paper trades in daily report.")
+    parser.add_argument("--paper-recent-hours", type=float, default=1.0, help="Recent paper activity window in hours.")
+    parser.add_argument("--paper-recent-limit", type=int, default=10, help="Max recent paper trades in report.")
     parser.add_argument("--account-checks", action="store_true", help="Add read-only balance/margin/position checks.")
     parser.add_argument("--account-exchanges", default="bybit,binance")
     parser.add_argument("--env", type=Path, default=Path(".env"))
@@ -700,4 +738,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
